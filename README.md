@@ -1,62 +1,168 @@
-# MindForge — Adaptive AI Study Workspace
+# 🧠 MindForge — Adaptive AI Study Workspace
 
-A React + Node.js internship assignment project that turns free-form study notes into a structured, interactive learning session.
+> Turn free-form study notes into an interactive learning session with AI-generated flashcards, quizzes, and mistake-based revision.
 
-## What it demonstrates
+MindForge is a React + Node.js internship assignment project focused on reliable AI integration, structured output validation, and interactive learning UX.
 
-- React functional components and hooks
-- Free-form AI input
-- Real LLM integration
-- Structured JSON output
-- Runtime validation before rendering
-- Loading, empty, timeout and error states
-- Retry flow
-- Abort/cancellation of older requests
-- Interactive flashcards
-- Quiz scoring
-- Wrong-answer tracking and retest mode
-- Responsive UI
-- Optional dark mode
-- Git-friendly architecture
+---
 
-## Architecture
+## ✨ Features
 
-Browser (React)
-→ `POST /api/study-session`
-→ Node/Express backend
-→ Gemini API with JSON schema
-→ JSON parsing + runtime validation
-→ React interactive components
+- 🧠 AI-generated study sessions from free-form input
+- 🃏 Interactive flashcards
+- 📝 Interactive quizzes with scoring
+- 🎯 Wrong-answer tracking
+- 🔁 Mistake-based retest mode
+- 📊 Learning progress and weak-spot tracking
+- 🛡️ Runtime validation of AI-generated JSON
+- ⚡ Loading, timeout, retry and error handling
+- ❌ Request cancellation for stale/older requests
+- 📱 Responsive UI
+- 🌙 Optional dark mode
+- 🔐 API key kept server-side
+- 🧪 Demo fault mode for malformed AI responses
+
+---
+
+## 📸 Screenshots
+
+### Study Workspace
+
+![MindForge Home](docs/screenshots/home.png)
+
+### Generated Study Session
+
+![MindForge Study Session](docs/screenshots/session.png)
+
+### Dark Mode
+
+![MindForge Dark Mode](docs/screenshots/dark-mode.png)
+
+---
+
+## 🏗️ Architecture
+
+```text
+┌─────────────────────────┐
+│       React UI          │
+│ Flashcards / Quiz / UI  │
+└────────────┬────────────┘
+             │
+             │ POST /api/study-session
+             ▼
+┌─────────────────────────┐
+│    Node + Express       │
+│ Request handling        │
+│ Error handling          │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│       Gemini API        │
+│   Structured JSON       │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│ JSON Parsing + Runtime  │
+│       Validation        │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│   Interactive Session   │
+│ Flashcards → Quiz →     │
+│ Retest mistakes         │
+└─────────────────────────┘
+```
 
 The API key stays on the server and is never bundled into the browser.
 
-## Setup
+---
 
-Requirements:
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React + Vite |
+| Backend | Node.js + Express |
+| AI | Google Gemini API |
+| Data Validation | Runtime schema validation |
+| Styling | CSS |
+| Development | npm |
+
+---
+
+## 📚 Learning Flow
+
+```text
+Topic / Notes
+     ↓
+Generate Study Session
+     ↓
+AI-generated structured content
+     ↓
+Flashcards
+     ↓
+Quiz
+     ↓
+Wrong answers identified
+     ↓
+Retest mistakes
+```
+
+The goal is not only to generate AI content, but to transform the generated data into a controlled and interactive learning workflow.
+
+---
+
+## 🧠 Why Structured AI Output?
+
+Instead of trusting free-form model text, MindForge requests structured data and validates it before rendering.
+
+The generated session follows a predictable structure:
+
+```text
+Session
+├── Title
+├── Summary
+├── Flashcards[]
+└── Quiz[]
+```
+
+This allows the frontend to work with predictable data and prevents malformed AI responses from directly breaking the UI.
+
+---
+
+## 🚀 Getting Started
+
+### Requirements
+
 - Node.js 20+ recommended
 - A Gemini API key
 
-1. Install dependencies:
+### 1. Install dependencies
 
 ```bash
 npm install
 ```
 
-2. Create `.env` from `.env.example`:
+### 2. Create your environment file
 
-```bash
-cp .env.example .env
+Create `.env` from `.env.example`.
+
+On Windows, simply copy:
+
+```text
+.env.example → .env
 ```
 
-On Windows, simply copy `.env.example` to `.env`.
-
-3. Add your key:
+Then add your Gemini API key:
 
 ```env
 GEMINI_API_KEY=your_key_here
 ```
 
-4. Start both frontend and backend:
+### 3. Start the application
 
 ```bash
 npm run dev
@@ -64,62 +170,177 @@ npm run dev
 
 Open the Vite URL shown in the terminal, normally:
 
-`http://localhost:5173`
-
-## Production-style build
-
-```bash
-npm run build
+```text
+http://localhost:5173
 ```
 
-For the assignment's requested local start command, keep the backend API running and serve the built frontend using your preferred deployment/static hosting setup.
+---
 
-## Failure handling
+## 🧪 Failure Handling
 
-The backend and frontend deliberately defend against unreliable AI output:
+MindForge deliberately handles unreliable AI output instead of rendering model responses blindly.
 
-- missing API key
-- provider HTTP errors
-- timeout
-- empty model output
-- malformed JSON
-- wrong JSON shape
-- empty flashcards/quiz
-- invalid quiz options/correct-answer index
-- cancelled/stale frontend requests
+The application handles:
+
+- Missing API key
+- Provider HTTP errors
+- Request timeout
+- Empty model output
+- Malformed JSON
+- Incorrect JSON structure
+- Empty flashcards or quiz
+- Invalid quiz options
+- Invalid correct-answer index
+- Cancelled/stale frontend requests
 
 ### Demo malformed JSON
 
-To demonstrate the assignment's bad-output requirement without intentionally breaking the app:
+The assignment includes a bad-output requirement. MindForge provides a safe demo mode for testing this behavior.
+
+Set:
 
 ```env
 DEMO_FAULT_MODE=malformed-json
 ```
 
-Restart the server and click Generate. The UI should show a recoverable error instead of crashing. Set it back to `off` afterwards.
+Restart the server and click **Generate Study Session**.
 
-## AI usage note
+The UI should display a recoverable error instead of crashing.
 
-AI assistants may be used for scaffolding, debugging, documentation, and prompt refinement. The final code should be understood by the author and reviewed manually before submission.
+After testing, restore:
 
-## Known limitations
+```env
+DEMO_FAULT_MODE=off
+```
 
-- Sessions are not persisted between page reloads.
+---
+
+## 🔄 Request Lifecycle
+
+The frontend tracks the AI request lifecycle:
+
+```text
+Idle
+  ↓
+AI Thinking
+  ↓
+Success → Ready
+  ↓
+Error → Recoverable error state
+```
+
+Older requests can also be cancelled so stale responses do not overwrite newer user actions.
+
+---
+
+## 🎯 Mistake-Based Revision
+
+MindForge tracks incorrect quiz answers and allows the user to retest those weak areas.
+
+```text
+Quiz
+ ↓
+Incorrect Answer
+ ↓
+Weak Spot
+ ↓
+Retest Mistakes
+ ↓
+Improved Recall
+```
+
+This turns the application from a simple AI content generator into an adaptive learning workflow.
+
+---
+
+## 🖥️ Suggested Demo
+
+For a project walkthrough:
+
+1. Enter a learning topic.
+2. Generate a study session.
+3. Flip a flashcard.
+4. Answer a quiz question correctly.
+5. Answer another question incorrectly.
+6. Show the updated accuracy and weak-spot count.
+7. Open **Retest mistakes**.
+8. Toggle dark mode.
+9. Demonstrate the malformed-JSON recovery mode.
+
+---
+
+## 📦 Project Structure
+
+```text
+mindforge/
+│
+├── docs/
+│   └── screenshots/
+│       ├── home.png
+│       ├── session.png
+│       └── dark-mode.png
+│
+├── server/
+│   ├── index.js
+│   └── schema.js
+│
+├── src/
+│   ├── App.jsx
+│   ├── main.jsx
+│   └── styles.css
+│
+├── .env.example
+├── .gitignore
+├── index.html
+├── package.json
+├── package-lock.json
+├── README.md
+└── vite.config.js
+```
+
+---
+
+## 🛡️ Security
+
+The Gemini API key is stored in the server environment and is not exposed to the browser.
+
+The `.env` file is excluded from Git using `.gitignore`.
+
+Only `.env.example` is included in the repository.
+
+---
+
+## 🏗️ Production-Style Build
+
+Create a production build with:
+
+```bash
+npm run build
+```
+
+For deployment, keep the backend API running and serve the generated frontend using the preferred static hosting/deployment setup.
+
+---
+
+## ⚠️ Known Limitations
+
+- Sessions are not persisted after page reload.
 - No authentication.
-- The app does not claim the AI content is factually perfect.
-- No streaming is implemented in the core version because reliability and the assignment's 8-hour limit were prioritized.
+- AI-generated content is not guaranteed to be factually perfect.
+- No streaming is implemented in the core version because reliability and the assignment's time constraint were prioritized.
 
-## Time spent
+---
 
-Target: approximately 8 hours.
+## 🤖 AI Usage
 
-## Suggested demo
+AI assistants may be used for scaffolding, debugging, documentation, and prompt refinement.
 
-1. Generate a session from a topic.
-2. Flip a flashcard.
-3. Answer a quiz question correctly.
-4. Answer one incorrectly.
-5. Show the wrong-answer count.
-6. Open Retest mistakes.
-7. Toggle dark mode.
-8. Demonstrate the malformed-JSON error mode.
+The final implementation should be understood and manually reviewed by the author.
+
+---
+
+## 📌 Project Status
+
+Built as an SDE internship assignment with a focus on:
+
+**Structured AI → Validated Data → Reliable Interactive UI**
