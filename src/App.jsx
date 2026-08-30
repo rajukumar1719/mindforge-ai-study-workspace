@@ -193,7 +193,7 @@ export default function App() {
     setShowRetest(false);
 
     try {
-      const response = await fetch("/api/study-session", {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/study-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ topic: clean }),
