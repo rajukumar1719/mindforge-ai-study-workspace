@@ -73,7 +73,7 @@ app.post("/api/study-session", async (req, res) => {
   responseMimeType: "application/json",
   responseSchema: studySchema,
   thinkingConfig: {
-    thinkingLevel: "minimal"
+    thinkingLevel: "low"
   }
 }
         })
