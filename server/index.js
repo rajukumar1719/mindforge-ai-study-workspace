@@ -1,8 +1,15 @@
 import "dotenv/config";
 import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
 import { studyRateLimiter } from "./middleware/rateLimiter.js";
 import { cacheService } from "./services/cache.js";
 import { generateStudySession, getProviderInfo } from "./services/ai.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distPath = path.resolve(__dirname, "../dist");
 
 const app = express();
 
@@ -127,6 +134,34 @@ app.get("/api/health", (_req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Serve static frontend assets from dist folder if built
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+
+  // SPA fallback for Express 5: return index.html for all non-API GET requests
+  app.use((req, res, next) => {
+    if (req.method === "GET" && !req.path.startsWith("/api")) {
+      return res.sendFile(path.join(distPath, "index.html"));
+    }
+    next();
+  });
+} else {
+  // If dist is not built yet, show a clean message rather than Express "Cannot GET /"
+  app.get("/", (_req, res) => {
+    res.status(200).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>MindForge API Server</title></head>
+        <body style="font-family: system-ui, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; line-height: 1.6;">
+          <h2>MindForge API Server is Running</h2>
+          <p>The backend is healthy and running. To serve the frontend from this URL, set your Render Build Command to: <code>npm run build</code>.</p>
+          <p>API Health Check: <a href="/api/health">/api/health</a></p>
+        </body>
+      </html>
+    `);
+  });
+}
 
 app.listen(PORT, () => {
   const providerInfo = getProviderInfo();
