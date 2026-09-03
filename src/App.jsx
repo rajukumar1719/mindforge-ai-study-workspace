@@ -86,6 +86,23 @@ export default function App() {
     };
   }, []);
 
+  // Global safety handler: prevent any AbortController or TIMEOUT_35S rejections from becoming uncaught errors
+  useEffect(() => {
+    const handleUnhandledRejection = event => {
+      const reason = event.reason;
+      if (
+        reason === "TIMEOUT_35S" ||
+        reason?.name === "AbortError" ||
+        reason?.message?.includes("aborted") ||
+        reason?.message?.includes("TIMEOUT_35S")
+      ) {
+        event.preventDefault(); // Suppress unhandled rejection in browser console
+      }
+    };
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+    return () => window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+  }, []);
+
   // AI Status calculation
   const aiStatus = useMemo(() => {
     if (phase === "loading") {
@@ -203,23 +220,29 @@ export default function App() {
       } catch (err) {
         clearTimeout(timeoutTimer);
 
-        if (isTimeout) {
+        const wasTimeout =
+          isTimeout ||
+          err === "TIMEOUT_35S" ||
+          controller.signal.reason === "TIMEOUT_35S" ||
+          err?.name === "TimeoutError";
+
+        if (wasTimeout) {
           setError("The server is waking up or taking longer than expected. Please click Retry.");
           setPhase("error");
           return;
         }
 
-        if (err.name === "AbortError" && !isTimeout) {
+        if ((err?.name === "AbortError" || err?.message?.includes("aborted") || controller.signal.aborted) && !wasTimeout) {
           // Silent ignore user-initiated abort
           return;
         }
 
         const msg =
-          err.message?.includes("Failed to fetch") ||
-          err.message?.includes("NetworkError") ||
-          err.message?.includes("too long to respond")
+          err?.message?.includes("Failed to fetch") ||
+          err?.message?.includes("NetworkError") ||
+          err?.message?.includes("too long to respond")
             ? "The server is waking up or taking longer than expected. Please click Retry."
-            : (err.message || "The server is waking up or taking longer than expected. Please click Retry.");
+            : (err?.message || "The server is waking up or taking longer than expected. Please click Retry.");
 
         setError(msg);
         setPhase("error");

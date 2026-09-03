@@ -1,18 +1,17 @@
 import { studySchema, validateStudySession } from "../schema.js";
 
 /**
- * AI Service Provider Abstraction.
- * Supports primary Gemini provider and optional OpenAI-compatible fallback (e.g. Groq, OpenRouter).
- * Implements exponential backoff, timeout handling, structured validation, and mode tuning.
+ * Multi-Provider AI Fallback Waterfall.
+ * Attempts providers sequentially:
+ *   1. Groq (Fastest, low-latency, free/cheap: llama-3.3-70b-versatile)
+ *   2. Gemini (Google: gemini-1.5-flash / gemini-3.6-flash)
+ *   3. OpenRouter / Backup OpenAI-compatible (meta-llama/llama-3.1-8b-instruct:free)
+ *
+ * Each provider attempt has a strict 10-second timeout.
+ * If a provider returns 429, 5xx, or times out, immediately fails over to the next provider.
  */
 
-const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
-const REQUEST_TIMEOUT_MS = 25000;
-const MAX_RETRIES = 2;
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+const PROVIDER_TIMEOUT_MS = 10000; // Strict 10-second timeout per provider attempt
 
 function getSystemPrompt(mode = "full", difficulty = "medium") {
   const modeInstructions = {
@@ -56,17 +55,74 @@ Rules:
 }
 
 /**
- * Primary Provider: Google Gemini API with strict 25s timeout
+ * Provider 1: Groq API (Default/Fastest)
+ * Uses Groq's high-speed Llama-3.3-70b-versatile or llama-3.1-8b-instant
+ */
+async function callGroq({ topic, mode, difficulty, signal, requestId }) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return null;
+
+  const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+  const url = "https://api.groq.com/openai/v1/chat/completions";
+  const systemPrompt = getSystemPrompt(mode, difficulty);
+
+  const payload = {
+    model,
+    messages: [
+      {
+        role: "system",
+        content: `${systemPrompt}\n\nSchema Requirements:\nRespond with a single JSON object having: "topic" (string), "difficulty" (string), "summary" (string), "memoryTip" (string), "flashcards" (array of 6 objects with "id", "question", "answer"), and "quiz" (array of 5 objects with "id", "question", "options" [array of 4 strings], "correctAnswer" [integer 0-3], "explanation", "memoryTip").`
+      },
+      {
+        role: "user",
+        content: `Study Topic / Notes:\n${topic}`
+      }
+    ],
+    response_format: { type: "json_object" },
+    temperature: 0.3
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    signal,
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => null);
+    const err = new Error(errBody?.error?.message || `Groq API returned HTTP ${response.status}`);
+    err.status = response.status;
+    err.provider = "groq";
+    throw err;
+  }
+
+  const data = await response.json().catch(() => null);
+  const text = data?.choices?.[0]?.message?.content?.trim();
+
+  if (!text) {
+    const err = new Error("Groq returned an empty response content.");
+    err.status = 502;
+    err.provider = "groq";
+    throw err;
+  }
+
+  return { rawText: text, provider: `groq (${model})` };
+}
+
+/**
+ * Provider 2: Google Gemini API
+ * Uses Gemini 1.5 Flash (or configured model) with structured responseSchema
  */
 async function callGemini({ topic, mode, difficulty, signal, requestId }) {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured on the server.");
-  }
+  if (!apiKey) return null;
 
-  const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
   const prompt = `${getSystemPrompt(mode, difficulty)}\n\nStudy Topic / Notes:\n${topic}`;
 
   const payload = {
@@ -83,46 +139,22 @@ async function callGemini({ topic, mode, difficulty, signal, requestId }) {
     }
   };
 
-  // Strict 25-second AbortSignal timeout
-  const geminiAbortController = new AbortController();
-  const geminiTimer = setTimeout(() => geminiAbortController.abort(), 25000);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify(payload)
+  });
 
-  const onParentAbort = () => geminiAbortController.abort();
-  if (signal) {
-    signal.addEventListener("abort", onParentAbort, { once: true });
-  }
-
-  let response;
-  try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: geminiAbortController.signal,
-      body: JSON.stringify(payload)
-    });
-  } catch (fetchErr) {
-    if (geminiAbortController.signal.aborted && !signal?.aborted) {
-      console.error(`[${requestId}] Gemini API call timed out after 25 seconds.`);
-      const timeoutErr = new Error("The AI service took too long to respond. Please try again.");
-      timeoutErr.status = 504;
-      timeoutErr.name = "TimeoutError";
-      throw timeoutErr;
-    }
-    throw fetchErr;
-  } finally {
-    clearTimeout(geminiTimer);
-    if (signal) signal.removeEventListener("abort", onParentAbort);
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => null);
+    const err = new Error(errBody?.error?.message || `Gemini API returned HTTP ${response.status}`);
+    err.status = response.status;
+    err.provider = "gemini";
+    throw err;
   }
 
   const rawJson = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    const errorObj = new Error(rawJson?.error?.message || `Gemini API returned HTTP ${response.status}`);
-    errorObj.status = response.status;
-    errorObj.provider = "gemini";
-    throw errorObj;
-  }
-
   const text = rawJson?.candidates?.[0]?.content?.parts
     ?.map(p => p.text || "")
     .join("")
@@ -139,209 +171,208 @@ async function callGemini({ topic, mode, difficulty, signal, requestId }) {
 }
 
 /**
- * Fallback Provider: Compatible OpenAI-style REST endpoint (Groq / OpenRouter)
- * Documented choice: Groq Llama-3.3-70b provides free/low-cost sub-second structured JSON responses.
+ * Provider 3 (Optional): OpenRouter / Backup OpenAI-compatible endpoint
  */
-async function callFallbackProvider({ topic, mode, difficulty, signal, requestId }) {
-  const apiKey = process.env.FALLBACK_AI_API_KEY;
-  if (!apiKey) {
-    return null; // Fallback not configured
-  }
+async function callOpenRouter({ topic, mode, difficulty, signal, requestId }) {
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.FALLBACK_AI_API_KEY;
+  if (!apiKey) return null;
 
-  const baseUrl = (process.env.FALLBACK_AI_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
-  const model = process.env.FALLBACK_AI_MODEL || "llama-3.3-70b-versatile";
-
-  const prompt = `${getSystemPrompt(mode, difficulty)}\n\nTopic / Study Material:\n${topic}`;
+  const baseUrl = (process.env.FALLBACK_AI_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+  const url = `${baseUrl}/chat/completions`;
+  const model = process.env.OPENROUTER_MODEL || process.env.FALLBACK_AI_MODEL || "meta-llama/llama-3.1-8b-instruct:free";
+  const systemPrompt = getSystemPrompt(mode, difficulty);
 
   const payload = {
     model,
     messages: [
-      { role: "system", content: "You are a JSON-only study generator. Output valid JSON matching the requested structure." },
-      { role: "user", content: prompt }
+      {
+        role: "system",
+        content: `${systemPrompt}\n\nSchema Requirements:\nRespond with a single JSON object having: "topic" (string), "difficulty" (string), "summary" (string), "memoryTip" (string), "flashcards" (array of 6 objects with "id", "question", "answer"), and "quiz" (array of 5 objects with "id", "question", "options" [array of 4 strings], "correctAnswer" [integer 0-3], "explanation", "memoryTip").`
+      },
+      {
+        role: "user",
+        content: `Study Topic / Notes:\n${topic}`
+      }
     ],
     response_format: { type: "json_object" },
     temperature: 0.3
   };
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
+      Authorization: `Bearer ${apiKey}`,
+      "HTTP-Referer": "https://mindforge-ai-study-workspace.vercel.app",
+      "X-Title": "MindForge AI"
     },
     signal,
     body: JSON.stringify(payload)
   });
 
-  const rawJson = await response.json().catch(() => null);
-
   if (!response.ok) {
-    const errorObj = new Error(rawJson?.error?.message || `Fallback AI provider returned HTTP ${response.status}`);
-    errorObj.status = response.status;
-    errorObj.provider = "fallback";
-    throw errorObj;
-  }
-
-  const text = rawJson?.choices?.[0]?.message?.content?.trim();
-  if (!text) {
-    const err = new Error("Fallback provider returned an empty completion.");
-    err.status = 502;
-    err.provider = "fallback";
+    const errBody = await response.json().catch(() => null);
+    const err = new Error(errBody?.error?.message || `OpenRouter API returned HTTP ${response.status}`);
+    err.status = response.status;
+    err.provider = "openrouter";
     throw err;
   }
 
-  return { rawText: text, provider: `fallback (${model})` };
+  const data = await response.json().catch(() => null);
+  const text = data?.choices?.[0]?.message?.content?.trim();
+
+  if (!text) {
+    const err = new Error("OpenRouter returned an empty response content.");
+    err.status = 502;
+    err.provider = "openrouter";
+    throw err;
+  }
+
+  return { rawText: text, provider: `openrouter (${model})` };
 }
 
 /**
- * Main Study Session Generation Function.
- * Implements exponential backoff, circuit-breaking, and validation.
+ * Returns available configured providers for health check reporting.
+ */
+export function getProviderInfo() {
+  const providers = [];
+  if (process.env.GROQ_API_KEY) {
+    providers.push({ id: "groq", model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile" });
+  }
+  if (process.env.GEMINI_API_KEY) {
+    providers.push({ id: "gemini", model: process.env.GEMINI_MODEL || "gemini-1.5-flash" });
+  }
+  if (process.env.OPENROUTER_API_KEY || process.env.FALLBACK_AI_API_KEY) {
+    providers.push({ id: "openrouter", model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.1-8b-instruct:free" });
+  }
+
+  const primary = providers[0] || { id: "none", model: "none" };
+  const backupCount = Math.max(0, providers.length - 1);
+
+  return {
+    primaryProvider: primary.id,
+    primaryModel: primary.model,
+    availableBackupProviders: backupCount,
+    configuredProviders: providers.map(p => p.id)
+  };
+}
+
+/**
+ * Main AI Generation Entry Point with Multi-Provider Fallback Waterfall.
  */
 export async function generateStudySession({ topic, mode = "full", difficulty = "medium", clientSignal }) {
-  const requestId = `mf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  console.log(`[${requestId}] Generating study session | topic="${topic.slice(0, 40)}..." | mode=${mode} | diff=${difficulty}`);
+  const requestId = `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
-  let lastError = null;
+  // Define sequential waterfall chain
+  const waterfall = [
+    { name: "Groq", fn: callGroq, isConfigured: () => Boolean(process.env.GROQ_API_KEY) },
+    { name: "Gemini", fn: callGemini, isConfigured: () => Boolean(process.env.GEMINI_API_KEY) },
+    { name: "OpenRouter", fn: callOpenRouter, isConfigured: () => Boolean(process.env.OPENROUTER_API_KEY || process.env.FALLBACK_AI_API_KEY) }
+  ];
 
-  // Primary Provider Execution with transient retry
-  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
-    // Check if client disconnected before making call
+  // Filter to providers that have API keys present
+  const availableChain = waterfall.filter(p => p.isConfigured());
+
+  if (availableChain.length === 0) {
+    console.error(`[${requestId}] No AI provider API keys configured on server.`);
+    const err = new Error("No AI provider API key is configured on the server. Please check your environment variables.");
+    err.status = 500;
+    throw err;
+  }
+
+  const errors = [];
+
+  for (let i = 0; i < availableChain.length; i++) {
+    const currentProvider = availableChain[i];
+
+    // Abort early if user cancelled request
     if (clientSignal?.aborted) {
-      throw new Error("Client aborted generation request.");
+      throw new Error("Generation cancelled by user.");
     }
 
-    const timeoutController = new AbortController();
-    const timer = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
+    console.log(`[${requestId}] Attempting provider [${i + 1}/${availableChain.length}]: ${currentProvider.name}...`);
 
-    // Merge client cancellation with internal timeout
-    const combinedAbortHandler = () => timeoutController.abort();
+    // Wrap attempt in strict 10-second timeout
+    const providerController = new AbortController();
+    const timeoutId = setTimeout(() => providerController.abort(), PROVIDER_TIMEOUT_MS);
+
+    // Forward client abort to provider controller
+    const onClientAbort = () => providerController.abort();
     if (clientSignal) {
-      clientSignal.addEventListener("abort", combinedAbortHandler, { once: true });
+      clientSignal.addEventListener("abort", onClientAbort, { once: true });
     }
 
     try {
-      const result = await callGemini({
+      const result = await currentProvider.fn({
         topic,
         mode,
         difficulty,
-        signal: timeoutController.signal,
+        signal: providerController.signal,
         requestId
       });
 
-      clearTimeout(timer);
-      if (clientSignal) clientSignal.removeEventListener("abort", combinedAbortHandler);
+      clearTimeout(timeoutId);
+      if (clientSignal) clientSignal.removeEventListener("abort", onClientAbort);
 
-      // Parse JSON
-      let parsed;
-      try {
-        parsed = JSON.parse(result.rawText);
-      } catch (jsonErr) {
-        throw new Error("AI returned malformed JSON content.");
+      if (result?.rawText) {
+        // Parse and validate immediately against schema
+        const parsed = JSON.parse(result.rawText);
+        const validation = validateStudySession(parsed, mode);
+
+        if (validation.ok) {
+          console.log(`[${requestId}] Successfully generated session using ${result.provider}`);
+          return {
+            session: validation.data,
+            provider: result.provider,
+            cached: false
+          };
+        } else {
+          console.warn(`[${requestId}] Schema validation failed for ${currentProvider.name}: ${validation.error}`);
+          errors.push({ provider: currentProvider.name, error: `Schema validation failed: ${validation.error}` });
+        }
       }
-
-      // Validate against strict schema
-      const validation = validateStudySession(parsed, mode);
-      if (!validation.ok) {
-        throw new Error(`AI generated invalid study structure: ${validation.error}`);
-      }
-
-      console.log(`[${requestId}] Session generated successfully via ${result.provider} on attempt ${attempt}`);
-      return {
-        session: validation.data,
-        provider: result.provider,
-        cached: false
-      };
     } catch (err) {
-      clearTimeout(timer);
-      if (clientSignal) clientSignal.removeEventListener("abort", combinedAbortHandler);
+      clearTimeout(timeoutId);
+      if (clientSignal) clientSignal.removeEventListener("abort", onClientAbort);
 
-      lastError = err;
-
-      // Do not retry on client abort, timeout, or fatal configuration error
       if (clientSignal?.aborted) {
         throw new Error("Generation cancelled by user.");
       }
-      if (err.status === 504 || err.name === "TimeoutError") {
-        lastError = err;
-        break; // Do not retry if 25s timeout exceeded
-      }
-      if (err.message?.includes("GEMINI_API_KEY is not configured")) {
-        throw err;
-      }
 
-      const isTransient =
-        err.status === 429 ||
-        (err.status >= 500 && err.status <= 599) ||
-        err.message?.includes("fetch failed");
+      const isTimeout = providerController.signal.aborted;
+      const isRateLimit = err.status === 429;
+      const errorMsg = isTimeout
+        ? "Timed out after 10 seconds"
+        : (err.message || `HTTP error ${err.status}`);
 
-      if (isTransient && attempt <= MAX_RETRIES) {
-        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 4000);
-        console.warn(`[${requestId}] Transient error (${err.message}) on attempt ${attempt}. Retrying in ${delay}ms...`);
-        await sleep(delay);
-        continue;
-      }
-
-      break;
-    }
-  }
-
-  // If primary provider failed and fallback is configured, attempt fallback
-  if (process.env.FALLBACK_AI_API_KEY && lastError?.status !== 504) {
-    console.warn(`[${requestId}] Primary provider failed. Attempting configured fallback AI provider...`);
-
-    const timeoutController = new AbortController();
-    const timer = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
-
-    try {
-      const fallbackResult = await callFallbackProvider({
-        topic,
-        mode,
-        difficulty,
-        signal: timeoutController.signal,
-        requestId
+      console.warn(`[${requestId}] ${currentProvider.name} failed (${errorMsg}). Switching to next provider in waterfall...`);
+      errors.push({
+        provider: currentProvider.name,
+        status: isTimeout ? 504 : (err.status || 500),
+        message: errorMsg
       });
-
-      clearTimeout(timer);
-
-      if (fallbackResult) {
-        const parsed = JSON.parse(fallbackResult.rawText);
-        const validation = validateStudySession(parsed, mode);
-        if (validation.ok) {
-          console.log(`[${requestId}] Successfully recovered using fallback provider: ${fallbackResult.provider}`);
-          return {
-            session: validation.data,
-            provider: fallbackResult.provider,
-            cached: false
-          };
-        }
-      }
-    } catch (fallbackErr) {
-      clearTimeout(timer);
-      console.error(`[${requestId}] Fallback AI provider also failed:`, fallbackErr.message);
     }
   }
 
-  // Format user-friendly error
-  if (lastError?.status === 504 || lastError?.name === "TimeoutError" || lastError?.name === "AbortError") {
-    console.error(`[${requestId}] Responding with HTTP 504 timeout.`);
+  // If we reached here, ALL configured providers failed or exhausted quotas
+  console.error(`[${requestId}] All ${availableChain.length} AI providers failed:`, errors);
+
+  const hadTimeout = errors.some(e => e.status === 504 || e.message?.includes("Timed out"));
+  const hadRateLimit = errors.some(e => e.status === 429);
+
+  if (hadTimeout && !hadRateLimit) {
     const timeoutErr = new Error("The AI service took too long to respond. Please try again.");
     timeoutErr.status = 504;
     throw timeoutErr;
   }
 
-  if (lastError?.status === 429) {
-    const quotaErr = new Error("AI provider rate limit reached. Please wait a moment and try again.");
-    quotaErr.status = 429;
-    throw quotaErr;
+  if (hadRateLimit) {
+    const rateErr = new Error("AI provider rate limit reached across available services. Please wait a moment and click Retry.");
+    rateErr.status = 429;
+    throw rateErr;
   }
 
-  if (lastError?.status >= 500) {
-    const serverErr = new Error("The AI study engine encountered a temporary upstream issue. Please retry.");
-    serverErr.status = 502;
-    throw serverErr;
-  }
-
-  const genericErr = new Error(lastError?.message || "Unable to generate study session right now. Please retry.");
-  genericErr.status = lastError?.status || 500;
-  throw genericErr;
+  const finalErr = new Error("Unable to generate study session right now. Please click Retry.");
+  finalErr.status = 502;
+  throw finalErr;
 }

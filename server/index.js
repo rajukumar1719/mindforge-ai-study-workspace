@@ -2,7 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import { studyRateLimiter } from "./middleware/rateLimiter.js";
 import { cacheService } from "./services/cache.js";
-import { generateStudySession } from "./services/ai.js";
+import { generateStudySession, getProviderInfo } from "./services/ai.js";
 
 dotenv.config();
 
@@ -110,14 +110,20 @@ app.post("/api/study-session", studyRateLimiter, async (req, res) => {
 /**
  * GET /api/health
  * Safe health check endpoint exposing zero secrets.
+ * Reports active primary provider and available backup providers count.
  */
 app.get("/api/health", (_req, res) => {
+  const providerInfo = getProviderInfo();
   res.json({
     ok: true,
     service: "MindForge API",
-    provider: "gemini",
-    model: MODEL,
-    fallbackConfigured: Boolean(process.env.FALLBACK_AI_API_KEY),
+    primaryProvider: providerInfo.primaryProvider,
+    primaryModel: providerInfo.primaryModel,
+    availableBackupProviders: providerInfo.availableBackupProviders,
+    configuredProviders: providerInfo.configuredProviders,
+    provider: providerInfo.primaryProvider,
+    model: providerInfo.primaryModel,
+    fallbackConfigured: providerInfo.availableBackupProviders > 0,
     cachedSessions: cacheService.size(),
     uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString()
@@ -125,6 +131,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.listen(PORT, () => {
+  const providerInfo = getProviderInfo();
   console.log(`MindForge API running on http://localhost:${PORT}`);
-  console.log(`Primary Model: ${MODEL} | Fallback Configured: ${Boolean(process.env.FALLBACK_AI_API_KEY)}`);
+  console.log(`Active Primary Provider: ${providerInfo.primaryProvider} (${providerInfo.primaryModel})`);
+  console.log(`Configured Providers: [${providerInfo.configuredProviders.join(", ")}] | Backup count: ${providerInfo.availableBackupProviders}`);
 });
