@@ -1,10 +1,8 @@
+import "dotenv/config";
 import express from "express";
-import dotenv from "dotenv";
 import { studyRateLimiter } from "./middleware/rateLimiter.js";
 import { cacheService } from "./services/cache.js";
 import { generateStudySession, getProviderInfo } from "./services/ai.js";
-
-dotenv.config();
 
 const app = express();
 
@@ -33,7 +31,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "32kb" }));
 
 const PORT = Number(process.env.PORT || 3001);
-const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
 
 /**
  * POST /api/study-session
@@ -72,9 +70,9 @@ app.post("/api/study-session", studyRateLimiter, async (req, res) => {
     });
   }
 
-  // Setup client disconnect cancellation
+  // Setup client disconnect cancellation (monitor response socket close before completion)
   const clientAbortController = new AbortController();
-  req.on("close", () => {
+  res.on("close", () => {
     if (!res.writableEnded) {
       clientAbortController.abort();
     }

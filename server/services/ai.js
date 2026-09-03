@@ -1,17 +1,18 @@
 import { studySchema, validateStudySession } from "../schema.js";
 
 /**
- * Multi-Provider AI Fallback Waterfall.
- * Attempts providers sequentially:
- *   1. Groq (Fastest, low-latency, free/cheap: llama-3.3-70b-versatile)
- *   2. Gemini (Google: gemini-1.5-flash / gemini-3.6-flash)
- *   3. OpenRouter / Backup OpenAI-compatible (meta-llama/llama-3.1-8b-instruct:free)
- *
- * Each provider attempt has a strict 10-second timeout.
- * If a provider returns 429, 5xx, or times out, immediately fails over to the next provider.
+ * Multi-Provider AI Fallback Waterfall:
+ *   1. Primary: Gemini (Google: gemini-flash-lite-latest / gemini-3.1-flash-lite)
+ *      - Strict 2.8-second deadline: if Gemini takes longer than 2 to 3 seconds or fails,
+ *        immediately cascades to Groq!
+ *   2. Secondary: Groq (Ultra-Fast 1-2s: openai/gpt-oss-20b or groq/compound-mini)
+ *      - If Groq fails, times out, or has an expired key, immediately cascades to OpenRouter!
+ *   3. Tertiary: OpenRouter (Fast reliable backup: meta-llama/llama-3.1-8b-instruct)
  */
 
-const PROVIDER_TIMEOUT_MS = 10000; // Strict 10-second timeout per provider attempt
+const GEMINI_TIMEOUT_MS = 2800; // Strict 2.8-second deadline (switches to Groq if > 2-3s)
+const GROQ_TIMEOUT_MS = 8000;   // 8-second timeout for Groq
+const OPENROUTER_TIMEOUT_MS = 12000; // 12-second timeout for OpenRouter backup
 
 function getSystemPrompt(mode = "full", difficulty = "medium") {
   const modeInstructions = {
@@ -55,73 +56,15 @@ Rules:
 }
 
 /**
- * Provider 1: Groq API (Default/Fastest)
- * Uses Groq's high-speed Llama-3.3-70b-versatile or llama-3.1-8b-instant
- */
-async function callGroq({ topic, mode, difficulty, signal, requestId }) {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) return null;
-
-  const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-  const url = "https://api.groq.com/openai/v1/chat/completions";
-  const systemPrompt = getSystemPrompt(mode, difficulty);
-
-  const payload = {
-    model,
-    messages: [
-      {
-        role: "system",
-        content: `${systemPrompt}\n\nSchema Requirements:\nRespond with a single JSON object having: "topic" (string), "difficulty" (string), "summary" (string), "memoryTip" (string), "flashcards" (array of 6 objects with "id", "question", "answer"), and "quiz" (array of 5 objects with "id", "question", "options" [array of 4 strings], "correctAnswer" [integer 0-3], "explanation", "memoryTip").`
-      },
-      {
-        role: "user",
-        content: `Study Topic / Notes:\n${topic}`
-      }
-    ],
-    response_format: { type: "json_object" },
-    temperature: 0.3
-  };
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
-    },
-    signal,
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    const errBody = await response.json().catch(() => null);
-    const err = new Error(errBody?.error?.message || `Groq API returned HTTP ${response.status}`);
-    err.status = response.status;
-    err.provider = "groq";
-    throw err;
-  }
-
-  const data = await response.json().catch(() => null);
-  const text = data?.choices?.[0]?.message?.content?.trim();
-
-  if (!text) {
-    const err = new Error("Groq returned an empty response content.");
-    err.status = 502;
-    err.provider = "groq";
-    throw err;
-  }
-
-  return { rawText: text, provider: `groq (${model})` };
-}
-
-/**
- * Provider 2: Google Gemini API
- * Uses Gemini 1.5 Flash (or configured model) with structured responseSchema
+ * Provider 1 (Primary): Google Gemini API
+ * Uses Gemini Flash Lite (or configured model) with structured responseSchema.
+ * If Gemini takes longer than 2-3 seconds or fails, the waterfall immediately switches to Groq!
  */
 async function callGemini({ topic, mode, difficulty, signal, requestId }) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
 
-  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const model = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const prompt = `${getSystemPrompt(mode, difficulty)}\n\nStudy Topic / Notes:\n${topic}`;
 
@@ -171,7 +114,97 @@ async function callGemini({ topic, mode, difficulty, signal, requestId }) {
 }
 
 /**
- * Provider 3 (Optional): OpenRouter / Backup OpenAI-compatible endpoint
+ * Provider 2 (Secondary Fallback): Groq API (Ultra-Fast 1-2s)
+ * Uses Groq's high-speed openai/gpt-oss-20b or groq/compound-mini / qwen/qwen3.8-27b.
+ */
+async function callGroq({ topic, mode, difficulty, signal, requestId }) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return null;
+
+  const primaryModel = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
+  const candidateModels = [
+    primaryModel,
+    "openai/gpt-oss-20b",
+    "groq/compound-mini",
+    "qwen/qwen3.8-27b"
+  ].filter((m, idx, arr) => arr.indexOf(m) === idx);
+
+  const url = "https://api.groq.com/openai/v1/chat/completions";
+  const systemPrompt = getSystemPrompt(mode, difficulty);
+
+  let lastErr = null;
+  for (const model of candidateModels) {
+    if (signal?.aborted) throw new Error("Request cancelled.");
+
+    const payload = {
+      model,
+      messages: [
+        {
+          role: "system",
+          content: `${systemPrompt}\n\nSchema Requirements:\nRespond with a single JSON object having: "topic" (string), "difficulty" (string), "summary" (string), "memoryTip" (string), "flashcards" (array of 6 objects with "id", "question", "answer"), and "quiz" (array of 5 objects with "id", "question", "options" [array of 4 strings], "correctAnswer" [integer 0-3], "explanation", "memoryTip").`
+        },
+        {
+          role: "user",
+          content: `Study Topic / Notes:\n${topic}`
+        }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.3
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`
+        },
+        signal,
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        const errMsg = errBody?.error?.message || `Groq API returned HTTP ${response.status}`;
+        const err = new Error(errMsg);
+        err.status = response.status;
+        err.provider = "groq";
+
+        // If 404 (model_not_found), try next verified candidate model
+        if (response.status === 404 && candidateModels.indexOf(model) < candidateModels.length - 1) {
+          lastErr = err;
+          continue;
+        }
+        throw err;
+      }
+
+      const data = await response.json().catch(() => null);
+      const text = data?.choices?.[0]?.message?.content?.trim();
+
+      if (!text) {
+        const err = new Error("Groq returned an empty response content.");
+        err.status = 502;
+        err.provider = "groq";
+        throw err;
+      }
+
+      return { rawText: text, provider: `groq (${model})` };
+    } catch (err) {
+      if (err.status === 404 && candidateModels.indexOf(model) < candidateModels.length - 1) {
+        lastErr = err;
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (lastErr) throw lastErr;
+  return null;
+}
+
+/**
+ * Provider 3 (Tertiary Fallback): OpenRouter API (~600ms)
+ * Used as backup if Groq fails or expires.
  */
 async function callOpenRouter({ topic, mode, difficulty, signal, requestId }) {
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.FALLBACK_AI_API_KEY;
@@ -179,7 +212,8 @@ async function callOpenRouter({ topic, mode, difficulty, signal, requestId }) {
 
   const baseUrl = (process.env.FALLBACK_AI_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
   const url = `${baseUrl}/chat/completions`;
-  const model = process.env.OPENROUTER_MODEL || process.env.FALLBACK_AI_MODEL || "meta-llama/llama-3.1-8b-instruct:free";
+  const rawModel = process.env.OPENROUTER_MODEL || process.env.FALLBACK_AI_MODEL || "meta-llama/llama-3.1-8b-instruct";
+  const model = rawModel.replace(/:free$/, ""); // Ensure active verified slug
   const systemPrompt = getSystemPrompt(mode, difficulty);
 
   const payload = {
@@ -236,14 +270,14 @@ async function callOpenRouter({ topic, mode, difficulty, signal, requestId }) {
  */
 export function getProviderInfo() {
   const providers = [];
-  if (process.env.GROQ_API_KEY) {
-    providers.push({ id: "groq", model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile" });
-  }
   if (process.env.GEMINI_API_KEY) {
-    providers.push({ id: "gemini", model: process.env.GEMINI_MODEL || "gemini-1.5-flash" });
+    providers.push({ id: "gemini", model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest" });
+  }
+  if (process.env.GROQ_API_KEY) {
+    providers.push({ id: "groq", model: process.env.GROQ_MODEL || "openai/gpt-oss-20b" });
   }
   if (process.env.OPENROUTER_API_KEY || process.env.FALLBACK_AI_API_KEY) {
-    providers.push({ id: "openrouter", model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.1-8b-instruct:free" });
+    providers.push({ id: "openrouter", model: (process.env.OPENROUTER_MODEL || "meta-llama/llama-3.1-8b-instruct").replace(/:free$/, "") });
   }
 
   const primary = providers[0] || { id: "none", model: "none" };
@@ -259,15 +293,31 @@ export function getProviderInfo() {
 
 /**
  * Main AI Generation Entry Point with Multi-Provider Fallback Waterfall.
+ * Cascades: Gemini (primary with 2.8s fast cut-off) -> Groq (ultra-fast) -> OpenRouter (reliable backup).
  */
 export async function generateStudySession({ topic, mode = "full", difficulty = "medium", clientSignal }) {
   const requestId = `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
-  // Define sequential waterfall chain
+  // Define prioritized waterfall: Gemini (Primary) -> Groq (Secondary) -> OpenRouter (Tertiary)
   const waterfall = [
-    { name: "Groq", fn: callGroq, isConfigured: () => Boolean(process.env.GROQ_API_KEY) },
-    { name: "Gemini", fn: callGemini, isConfigured: () => Boolean(process.env.GEMINI_API_KEY) },
-    { name: "OpenRouter", fn: callOpenRouter, isConfigured: () => Boolean(process.env.OPENROUTER_API_KEY || process.env.FALLBACK_AI_API_KEY) }
+    {
+      name: "Gemini",
+      fn: callGemini,
+      timeoutMs: GEMINI_TIMEOUT_MS,
+      isConfigured: () => Boolean(process.env.GEMINI_API_KEY)
+    },
+    {
+      name: "Groq",
+      fn: callGroq,
+      timeoutMs: GROQ_TIMEOUT_MS,
+      isConfigured: () => Boolean(process.env.GROQ_API_KEY)
+    },
+    {
+      name: "OpenRouter",
+      fn: callOpenRouter,
+      timeoutMs: OPENROUTER_TIMEOUT_MS,
+      isConfigured: () => Boolean(process.env.OPENROUTER_API_KEY || process.env.FALLBACK_AI_API_KEY)
+    }
   ];
 
   // Filter to providers that have API keys present
@@ -275,7 +325,7 @@ export async function generateStudySession({ topic, mode = "full", difficulty = 
 
   if (availableChain.length === 0) {
     console.error(`[${requestId}] No AI provider API keys configured on server.`);
-    const err = new Error("No AI provider API key is configured on the server. Please check your environment variables.");
+    const err = new Error("No AI provider API key is configured on the server. Please check your environment variables or provide an API key.");
     err.status = 500;
     throw err;
   }
@@ -290,11 +340,20 @@ export async function generateStudySession({ topic, mode = "full", difficulty = 
       throw new Error("Generation cancelled by user.");
     }
 
-    console.log(`[${requestId}] Attempting provider [${i + 1}/${availableChain.length}]: ${currentProvider.name}...`);
+    console.log(`[${requestId}] Attempting provider [${i + 1}/${availableChain.length}]: ${currentProvider.name} (budget: ${currentProvider.timeoutMs / 1000}s)...`);
 
-    // Wrap attempt in strict 10-second timeout
+    // Wrap attempt in provider's specific timeout budget with guaranteed Promise.race
     const providerController = new AbortController();
-    const timeoutId = setTimeout(() => providerController.abort(), PROVIDER_TIMEOUT_MS);
+    let timeoutId = null;
+
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        providerController.abort();
+        const timeoutErr = new Error(`Took longer than ${currentProvider.timeoutMs / 1000}s`);
+        timeoutErr.isTimeout = true;
+        reject(timeoutErr);
+      }, currentProvider.timeoutMs);
+    });
 
     // Forward client abort to provider controller
     const onClientAbort = () => providerController.abort();
@@ -303,13 +362,16 @@ export async function generateStudySession({ topic, mode = "full", difficulty = 
     }
 
     try {
-      const result = await currentProvider.fn({
-        topic,
-        mode,
-        difficulty,
-        signal: providerController.signal,
-        requestId
-      });
+      const result = await Promise.race([
+        currentProvider.fn({
+          topic,
+          mode,
+          difficulty,
+          signal: providerController.signal,
+          requestId
+        }),
+        timeoutPromise
+      ]);
 
       clearTimeout(timeoutId);
       if (clientSignal) clientSignal.removeEventListener("abort", onClientAbort);
@@ -339,13 +401,12 @@ export async function generateStudySession({ topic, mode = "full", difficulty = 
         throw new Error("Generation cancelled by user.");
       }
 
-      const isTimeout = providerController.signal.aborted;
-      const isRateLimit = err.status === 429;
+      const isTimeout = err.isTimeout || providerController.signal.aborted;
       const errorMsg = isTimeout
-        ? "Timed out after 10 seconds"
+        ? `Took longer than ${currentProvider.timeoutMs / 1000}s`
         : (err.message || `HTTP error ${err.status}`);
 
-      console.warn(`[${requestId}] ${currentProvider.name} failed (${errorMsg}). Switching to next provider in waterfall...`);
+      console.warn(`[${requestId}] ${currentProvider.name} failed (${errorMsg}). Switching immediately to next provider in waterfall...`);
       errors.push({
         provider: currentProvider.name,
         status: isTimeout ? 504 : (err.status || 500),
@@ -357,14 +418,15 @@ export async function generateStudySession({ topic, mode = "full", difficulty = 
   // If we reached here, ALL configured providers failed or exhausted quotas
   console.error(`[${requestId}] All ${availableChain.length} AI providers failed:`, errors);
 
-  const hadTimeout = errors.some(e => e.status === 504 || e.message?.includes("Timed out"));
-  const hadRateLimit = errors.some(e => e.status === 429);
-
-  if (hadTimeout && !hadRateLimit) {
-    const timeoutErr = new Error("The AI service took too long to respond. Please try again.");
-    timeoutErr.status = 504;
-    throw timeoutErr;
+  const hadAuthError = errors.some(e => e.status === 401 || e.status === 403 || e.message?.toLowerCase().includes("api key") || e.message?.toLowerCase().includes("unauthorized"));
+  if (hadAuthError) {
+    const authErr = new Error("API key invalid or expired across configured providers. Please provide a valid API key.");
+    authErr.status = 401;
+    throw authErr;
   }
+
+  const hadTimeout = errors.some(e => e.status === 504 || e.message?.includes("longer than"));
+  const hadRateLimit = errors.some(e => e.status === 429);
 
   if (hadRateLimit) {
     const rateErr = new Error("AI provider rate limit reached across available services. Please wait a moment and click Retry.");
@@ -372,7 +434,13 @@ export async function generateStudySession({ topic, mode = "full", difficulty = 
     throw rateErr;
   }
 
-  const finalErr = new Error("Unable to generate study session right now. Please click Retry.");
+  if (hadTimeout) {
+    const timeoutErr = new Error("The AI services took longer than expected to respond. Please click Retry.");
+    timeoutErr.status = 504;
+    throw timeoutErr;
+  }
+
+  const finalErr = new Error("Unable to generate study session right now. If problem persists, please check or provide a new API key.");
   finalErr.status = 502;
   throw finalErr;
 }
