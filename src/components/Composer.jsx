@@ -29,7 +29,8 @@ export function Composer({
   phase,
   error,
   lastTopic,
-  onCancelRequest
+  onCancelRequest,
+  onDismissError
 }) {
   const [loadingStepIndex, setLoadingStepIndex] = useState(0);
 
@@ -218,18 +219,43 @@ export function Composer({
       )}
 
       {/* Context-aware Error State */}
-      {phase === "error" && (
+      {phase === "error" && error && (
         <div className="state-card error-card">
           <div className="state-icon">!</div>
-          <div className="state-copy">
-            <h3>We couldn't build this session</h3>
+          <div className="state-copy" style={{ flex: 1 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3>Generation Notice</h3>
+              {onDismissError && (
+                <button
+                  type="button"
+                  className="dismiss-btn"
+                  onClick={onDismissError}
+                  aria-label="Dismiss error notice"
+                  title="Dismiss"
+                >
+                  <Icon name="cross" size={14} />
+                </button>
+              )}
+            </div>
             <p>{error}</p>
-            <button
-              className="button primary small"
-              onClick={() => onGenerate(lastTopic)}
-            >
-              <Icon name="rotate" size={14} /> Try again
-            </button>
+            <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+              <button
+                type="button"
+                className="button primary small"
+                onClick={() => onGenerate(lastTopic || topic)}
+              >
+                <Icon name="rotate" size={14} /> Retry
+              </button>
+              {onDismissError && (
+                <button
+                  type="button"
+                  className="button secondary small"
+                  onClick={onDismissError}
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

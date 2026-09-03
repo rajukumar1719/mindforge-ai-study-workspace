@@ -7,7 +7,7 @@ import { studySchema, validateStudySession } from "../schema.js";
  */
 
 const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
-const REQUEST_TIMEOUT_MS = 45000;
+const REQUEST_TIMEOUT_MS = 25000;
 const MAX_RETRIES = 2;
 
 function sleep(ms) {
@@ -56,7 +56,7 @@ Rules:
 }
 
 /**
- * Primary Provider: Google Gemini API
+ * Primary Provider: Google Gemini API with strict 25s timeout
  */
 async function callGemini({ topic, mode, difficulty, signal, requestId }) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -83,12 +83,36 @@ async function callGemini({ topic, mode, difficulty, signal, requestId }) {
     }
   };
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    signal,
-    body: JSON.stringify(payload)
-  });
+  // Strict 25-second AbortSignal timeout
+  const geminiAbortController = new AbortController();
+  const geminiTimer = setTimeout(() => geminiAbortController.abort(), 25000);
+
+  const onParentAbort = () => geminiAbortController.abort();
+  if (signal) {
+    signal.addEventListener("abort", onParentAbort, { once: true });
+  }
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: geminiAbortController.signal,
+      body: JSON.stringify(payload)
+    });
+  } catch (fetchErr) {
+    if (geminiAbortController.signal.aborted && !signal?.aborted) {
+      console.error(`[${requestId}] Gemini API call timed out after 25 seconds.`);
+      const timeoutErr = new Error("The AI service took too long to respond. Please try again.");
+      timeoutErr.status = 504;
+      timeoutErr.name = "TimeoutError";
+      throw timeoutErr;
+    }
+    throw fetchErr;
+  } finally {
+    clearTimeout(geminiTimer);
+    if (signal) signal.removeEventListener("abort", onParentAbort);
+  }
 
   const rawJson = await response.json().catch(() => null);
 
@@ -233,16 +257,19 @@ export async function generateStudySession({ topic, mode = "full", difficulty = 
 
       lastError = err;
 
-      // Do not retry on client abort or fatal configuration error
+      // Do not retry on client abort, timeout, or fatal configuration error
       if (clientSignal?.aborted) {
         throw new Error("Generation cancelled by user.");
+      }
+      if (err.status === 504 || err.name === "TimeoutError") {
+        lastError = err;
+        break; // Do not retry if 25s timeout exceeded
       }
       if (err.message?.includes("GEMINI_API_KEY is not configured")) {
         throw err;
       }
 
       const isTransient =
-        err.name === "AbortError" ||
         err.status === 429 ||
         (err.status >= 500 && err.status <= 599) ||
         err.message?.includes("fetch failed");
@@ -259,7 +286,7 @@ export async function generateStudySession({ topic, mode = "full", difficulty = 
   }
 
   // If primary provider failed and fallback is configured, attempt fallback
-  if (process.env.FALLBACK_AI_API_KEY) {
+  if (process.env.FALLBACK_AI_API_KEY && lastError?.status !== 504) {
     console.warn(`[${requestId}] Primary provider failed. Attempting configured fallback AI provider...`);
 
     const timeoutController = new AbortController();
@@ -295,8 +322,9 @@ export async function generateStudySession({ topic, mode = "full", difficulty = 
   }
 
   // Format user-friendly error
-  if (lastError?.name === "AbortError") {
-    const timeoutErr = new Error("The AI service took too long to respond. The server may be waking up — please try again.");
+  if (lastError?.status === 504 || lastError?.name === "TimeoutError" || lastError?.name === "AbortError") {
+    console.error(`[${requestId}] Responding with HTTP 504 timeout.`);
+    const timeoutErr = new Error("The AI service took too long to respond. Please try again.");
     timeoutErr.status = 504;
     throw timeoutErr;
   }

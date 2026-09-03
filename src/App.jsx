@@ -57,6 +57,35 @@ export default function App() {
     saveTheme(themeStr);
   }, [darkMode]);
 
+  // Cold-start background ping to wake up the Render backend early before user clicks Generate
+  useEffect(() => {
+    const apiBase = import.meta.env.VITE_API_URL || "";
+    const pingController = new AbortController();
+    const timer = setTimeout(() => pingController.abort(), 15000);
+
+    fetch(`${apiBase}/api/health`, {
+      method: "GET",
+      signal: pingController.signal
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data?.ok) {
+          console.log("[Cold-Start Ping] Render backend is hot & ready:", data.model);
+        }
+      })
+      .catch(err => {
+        console.log("[Cold-Start Ping] Backend spin-up initiated:", err.message);
+      })
+      .finally(() => {
+        clearTimeout(timer);
+      });
+
+    return () => {
+      clearTimeout(timer);
+      pingController.abort();
+    };
+  }, []);
+
   // AI Status calculation
   const aiStatus = useMemo(() => {
     if (phase === "loading") {
@@ -68,9 +97,9 @@ export default function App() {
     }
     if (phase === "error") {
       return {
-        label: "AI UNAVAILABLE",
+        label: "AI RETRY",
         className: "offline",
-        title: "Service encountered a transient issue"
+        title: "Click Retry to re-trigger generation"
       };
     }
     if (lastProvider === "cache") {
@@ -97,7 +126,7 @@ export default function App() {
     setError("");
   }, []);
 
-  // Main Generation Handler
+  // Main Generation Handler with strict 35-second AbortController timeout
   const generateStudySession = useCallback(
     async (customTopic = topic) => {
       const cleanTopic = customTopic.trim();
@@ -114,6 +143,12 @@ export default function App() {
 
       const controller = new AbortController();
       abortRef.current = controller;
+
+      let isTimeout = false;
+      const timeoutTimer = setTimeout(() => {
+        isTimeout = true;
+        controller.abort("TIMEOUT_35S");
+      }, 35000); // 35s strict frontend timeout
 
       setLastTopic(cleanTopic);
       setPhase("loading");
@@ -134,9 +169,14 @@ export default function App() {
           signal: controller.signal
         });
 
+        clearTimeout(timeoutTimer);
+
         const body = await response.json().catch(() => null);
 
         if (!response.ok) {
+          if (response.status === 504 || body?.error?.includes("too long to respond")) {
+            throw new Error(body?.error || "The server is waking up or taking longer than expected. Please click Retry.");
+          }
           throw new Error(body?.error || "The server could not generate your study session.");
         }
 
@@ -161,14 +201,30 @@ export default function App() {
         const updatedStats = recordSessionActivity();
         setStats(updatedStats);
       } catch (err) {
-        if (err.name === "AbortError" || controller.signal.aborted) {
+        clearTimeout(timeoutTimer);
+
+        if (isTimeout) {
+          setError("The server is waking up or taking longer than expected. Please click Retry.");
+          setPhase("error");
+          return;
+        }
+
+        if (err.name === "AbortError" && !isTimeout) {
           // Silent ignore user-initiated abort
           return;
         }
 
-        setError(err.message || "Failed to generate study session. Please retry.");
+        const msg =
+          err.message?.includes("Failed to fetch") ||
+          err.message?.includes("NetworkError") ||
+          err.message?.includes("too long to respond")
+            ? "The server is waking up or taking longer than expected. Please click Retry."
+            : (err.message || "The server is waking up or taking longer than expected. Please click Retry.");
+
+        setError(msg);
         setPhase("error");
       } finally {
+        clearTimeout(timeoutTimer);
         if (abortRef.current === controller) {
           abortRef.current = null;
         }
@@ -336,6 +392,7 @@ export default function App() {
                 error={error}
                 lastTopic={lastTopic}
                 onCancelRequest={cancelRequest}
+                onDismissError={() => setError("")}
               />
             )}
 

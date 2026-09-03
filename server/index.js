@@ -97,7 +97,10 @@ app.post("/api/study-session", studyRateLimiter, async (req, res) => {
       return; // Request was cancelled by client
     }
 
-    const statusCode = err.status || (err.message?.includes("timed out") ? 504 : 500);
+    const statusCode =
+      err.status ||
+      (err.message?.includes("too long to respond") || err.name === "TimeoutError" ? 504 : 500);
+
     return res.status(statusCode).json({
       error: err.message || "An unexpected error occurred while creating your study session."
     });
