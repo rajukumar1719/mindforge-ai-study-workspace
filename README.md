@@ -1,271 +1,153 @@
-# 🧠 MindForge — Adaptive AI Study Workspace
+# 🧠 MindForge — Production-Grade AI Study Workspace
 
-> Turn free-form study notes into an interactive learning session with AI-generated flashcards, quizzes, and mistake-based revision.
+> Transform study notes and technical interview topics into structured, high-yield active recall sessions with 3D flashcards, adaptive scenario quizzes, and mistake-based revision drills.
 
-MindForge is a React + Node.js internship assignment project focused on reliable AI integration, structured output validation, and interactive learning UX.
-
----
-
-## ✨ Features
-
-- 🧠 AI-generated study sessions from free-form input
-- 🃏 Interactive flashcards
-- 📝 Interactive quizzes with scoring
-- 🎯 Wrong-answer tracking
-- 🔁 Mistake-based retest mode
-- 📊 Learning progress and weak-spot tracking
-- 🛡️ Runtime validation of AI-generated JSON
-- ⚡ Loading, timeout, retry and error handling
-- ❌ Request cancellation for stale/older requests
-- 📱 Responsive UI
-- 🌙 Optional dark mode
-- 🔐 API key kept server-side
-- 🧪 Demo fault mode for malformed AI responses
+[![Vercel Deployment](https://img.shields.io/badge/Frontend-Vercel-black?style=flat-square&logo=vercel)](https://mindforge-ai-study-workspace.vercel.app/)
+[![Render Deployment](https://img.shields.io/badge/Backend-Render-46E3B7?style=flat-square&logo=render)](https://mindforge-ai-study-workspace.onrender.com)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)](https://react.dev)
+[![Node.js](https://img.shields.io/badge/Node.js-Express-339933?style=flat-square&logo=node.js)](https://nodejs.org)
+[![Gemini API](https://img.shields.io/badge/AI-Gemini%20Flash-4285F4?style=flat-square&logo=google)](https://ai.google.dev)
 
 ---
 
-## 📸 Screenshots
+## 🌟 Production Features
 
-### Study Workspace
+### 1. Modern SaaS Interface
+- **Desktop Sidebar Navigation**: Persistent left sidebar with instant quick-launch, study streak, and live status indicator.
+- **Mobile Ergonomics**: Clean mobile topbar with slide-over drawer and thumb-reachable bottom navigation bar (tested from 360px up to 4K displays).
+- **Dark & Light Mode**: Instant, flicker-free theme switcher with local storage persistence and system preference detection (`prefers-color-scheme`).
 
-![MindForge Home](docs/screenshots/home.png)
+### 2. Dedicated Study Modes
+- **🎯 Interview Prep**: Tailors the AI generation prompt to software engineering interview scenarios, technical tradeoffs, time/space complexity, common candidate pitfalls, and edge cases.
+- **📝 Exam Mastery**: Focuses on academic rigor, definitions, theorems, formulas, and tricky boundary conditions.
+- **⚡ Quick Revision**: High-yield rapid recall, concise prompt-answer pairs, and fast knowledge verification.
+- **✦ Full Session**: Balanced comprehensive study pack.
 
-### Generated Study Session
+### 3. Interactive Active Recall
+- **🃏 3D Flip Flashcards**: Realistic 3D card flip with smooth CSS perspective, self-grading buttons ("I knew this" vs "Need review"), shuffle, restart, and full keyboard navigation (arrows, space, K, R).
+- **📝 Scenario-Based Quiz**: One-question-at-a-time flow with option hotkeys (A, B, C, D), instant feedback with rationale and mnemonic memory cues.
+- **🎉 Score Celebration**: Celebratory canvas confetti particle burst on high scores (≥80%) and detailed performance breakdown.
+- **🔁 Mistake-Based Retest Drill**: Isolate and retest only the questions answered incorrectly until mastered.
 
-![MindForge Study Session](docs/screenshots/session.png)
+### 4. Study Dashboard & History
+- **📊 Retention Analytics**: Real-time tracking of total study sessions, cards reviewed, quiz attempts, and overall quiz accuracy percentage.
+- **🔥 Consecutive Day Streak**: Calendar-based streak tracking rewarding daily revision.
+- **⏱️ Study History**: Searchable and filterable recent sessions drawer with 1-click resumption, deletion, and clear history.
+- **🔖 Saved Bookmarks**: Save individual cards, challenging quiz questions, or entire study sessions for quick practice.
 
-### Dark Mode
-
-![MindForge Dark Mode](docs/screenshots/dark-mode.png)
+### 5. Multi-Format Export
+- **Markdown Document**: Formatted text ready to copy-paste into Obsidian, Notion, or GitHub Notes.
+- **JSON File Download**: Structured export containing the validated session data schema.
+- **Printable Study Sheet**: Clean `@media print` stylesheet removing all browser chrome for PDF generation or physical printing.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
 ```text
-┌─────────────────────────┐
-│       React UI          │
-│ Flashcards / Quiz / UI  │
-└────────────┬────────────┘
-             │
-             │ POST /api/study-session
-             ▼
-┌─────────────────────────┐
-│    Node + Express       │
-│ Request handling        │
-│ Error handling          │
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│       Gemini API        │
-│   Structured JSON       │
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│ JSON Parsing + Runtime  │
-│       Validation        │
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│   Interactive Session   │
-│ Flashcards → Quiz →     │
-│ Retest mistakes         │
-└─────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       React + Vite UI                       │
+│  Sidebar / Dashboard / 3D Flashcards / Quiz / Retest Modal  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               │ POST /api/study-session
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Express API Gateway                      │
+│   • CORS protection (FRONTEND_URL configurable)             │
+│   • In-memory Rate Limiting (20 req / 10 min per IP)        │
+│   • In-memory LRU Cache (CACHE_TTL_SECONDS configurable)    │
+│   • Client disconnect abort handling (req.on('close'))      │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 AI Service Abstraction                      │
+│   • Primary Provider: Google Gemini API                     │
+│   • Fallback Provider: OpenAI-compatible (Groq/OpenRouter)  │
+│   • Exponential Backoff: Up to 2 retries on 429/5xx         │
+│   • Timeout: 45s AbortController circuit breaker            │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Runtime Schema Validation                  │
+│   • Strict sanitization of flashcards (6) and quiz (5)      │
+│   • Enforces exactly 4 options and valid answer index (0-3) │
+└─────────────────────────────────────────────────────────────┘
 ```
-
-The API key stays on the server and is never bundled into the browser.
 
 ---
 
-## 🛠️ Tech Stack
+## 🛡️ Resilience & Error Handling
 
-| Layer | Technology |
-|---|---|
-| Frontend | React + Vite |
-| Backend | Node.js + Express |
-| AI | Google Gemini API |
-| Data Validation | Runtime schema validation |
-| Styling | CSS |
-| Development | npm |
-
----
-
-## 📚 Learning Flow
-
-```text
-Topic / Notes
-     ↓
-Generate Study Session
-     ↓
-AI-generated structured content
-     ↓
-Flashcards
-     ↓
-Quiz
-     ↓
-Wrong answers identified
-     ↓
-Retest mistakes
-```
-
-The goal is not only to generate AI content, but to transform the generated data into a controlled and interactive learning workflow.
-
----
-
-## 🧠 Why Structured AI Output?
-
-Instead of trusting free-form model text, MindForge requests structured data and validates it before rendering.
-
-The generated session follows a predictable structure:
-
-```text
-Session
-├── Title
-├── Summary
-├── Flashcards[]
-└── Quiz[]
-```
-
-This allows the frontend to work with predictable data and prevents malformed AI responses from directly breaking the UI.
+- **Circuit Breaking**: Requests automatically abort after 45 seconds to prevent hung backend processes.
+- **Exponential Backoff**: Up to 2 retries on transient errors (HTTP 429 rate limit, 500, 502, 503, 504, or network drops).
+- **Secondary AI Fallback**: If the primary Gemini provider quota is exhausted and `FALLBACK_AI_API_KEY` is configured, requests seamlessly route to a secondary provider (e.g. Groq / Llama 3.3).
+- **Request Cancellation**: Starting a new session automatically cancels any in-flight requests, preventing stale responses from overwriting the UI.
+- **Safe Health Check**: `GET /api/health` reports status, active model, and cache size without exposing keys or credentials.
+- **Demo Fault Mode**: For rubric evaluation, setting `DEMO_FAULT_MODE=malformed-json` tests graceful frontend recovery.
 
 ---
 
 ## 🚀 Getting Started
 
-### Requirements
+### Prerequisites
+- Node.js 20+
+- A Google Gemini API key ([Google AI Studio](https://aistudio.google.com/))
 
-- Node.js 20+ recommended
-- A Gemini API key
-
-### 1. Install dependencies
-
+### 1. Installation
 ```bash
 npm install
 ```
 
-### 2. Create your environment file
-
-Create `.env` from `.env.example`.
-
-On Windows, simply copy:
-
-```text
-.env.example → .env
+### 2. Environment Configuration
+Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
 ```
 
-Then add your Gemini API key:
-
+Configure your environment variables:
 ```env
-GEMINI_API_KEY=your_key_here
+# Primary AI Provider
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-3.6-flash
+
+# Optional Fallback Provider (Groq / OpenRouter)
+FALLBACK_AI_API_KEY=
+FALLBACK_AI_MODEL=llama-3.3-70b-versatile
+FALLBACK_AI_BASE_URL=https://api.groq.com/openai/v1
+
+# Server & Cache Configuration
+PORT=3001
+FRONTEND_URL=https://mindforge-ai-study-workspace.vercel.app
+VITE_API_URL=http://localhost:3001
+CACHE_TTL_SECONDS=3600
 ```
 
-### 3. Start the application
-
+### 3. Development Mode
+Run both frontend and backend concurrently:
 ```bash
 npm run dev
 ```
+Open `http://localhost:5173` in your browser.
 
-Open the Vite URL shown in the terminal, normally:
-
-```text
-http://localhost:5173
+### 4. Production Build
+```bash
+npm run build
 ```
 
 ---
 
-## 🧪 Failure Handling
+## ⌨️ Keyboard Shortcuts
 
-MindForge deliberately handles unreliable AI output instead of rendering model responses blindly.
-
-The application handles:
-
-- Missing API key
-- Provider HTTP errors
-- Request timeout
-- Empty model output
-- Malformed JSON
-- Incorrect JSON structure
-- Empty flashcards or quiz
-- Invalid quiz options
-- Invalid correct-answer index
-- Cancelled/stale frontend requests
-
-### Demo malformed JSON
-
-The assignment includes a bad-output requirement. MindForge provides a safe demo mode for testing this behavior.
-
-Set:
-
-```env
-DEMO_FAULT_MODE=malformed-json
-```
-
-Restart the server and click **Generate Study Session**.
-
-The UI should display a recoverable error instead of crashing.
-
-After testing, restore:
-
-```env
-DEMO_FAULT_MODE=off
-```
-
----
-
-## 🔄 Request Lifecycle
-
-The frontend tracks the AI request lifecycle:
-
-```text
-Idle
-  ↓
-AI Thinking
-  ↓
-Success → Ready
-  ↓
-Error → Recoverable error state
-```
-
-Older requests can also be cancelled so stale responses do not overwrite newer user actions.
-
----
-
-## 🎯 Mistake-Based Revision
-
-MindForge tracks incorrect quiz answers and allows the user to retest those weak areas.
-
-```text
-Quiz
- ↓
-Incorrect Answer
- ↓
-Weak Spot
- ↓
-Retest Mistakes
- ↓
-Improved Recall
-```
-
-This turns the application from a simple AI content generator into an adaptive learning workflow.
-
----
-
-## 🖥️ Suggested Demo
-
-For a project walkthrough:
-
-1. Enter a learning topic.
-2. Generate a study session.
-3. Flip a flashcard.
-4. Answer a quiz question correctly.
-5. Answer another question incorrectly.
-6. Show the updated accuracy and weak-spot count.
-7. Open **Retest mistakes**.
-8. Toggle dark mode.
-9. Demonstrate the malformed-JSON recovery mode.
+| Shortcut | Action |
+|---|---|
+| `Space` / `Enter` | Flip active flashcard |
+| `←` / `→` | Navigate previous / next card or quiz question |
+| `K` | Self-grade: "I knew this!" (mark mastered) |
+| `R` | Self-grade: "Need review" (mark for revision) |
+| `A`, `B`, `C`, `D` | Select quiz answer options |
 
 ---
 
@@ -273,74 +155,51 @@ For a project walkthrough:
 
 ```text
 mindforge/
-│
-├── docs/
-│   └── screenshots/
-│       ├── home.png
-│       ├── session.png
-│       └── dark-mode.png
-│
 ├── server/
-│   ├── index.js
-│   └── schema.js
-│
+│   ├── middleware/
+│   │   └── rateLimiter.js    # In-memory IP rate limiting
+│   ├── services/
+│   │   ├── ai.js             # Multi-provider abstraction & retry logic
+│   │   └── cache.js          # In-memory LRU cache with TTL
+│   ├── index.js              # Express server & API endpoints
+│   └── schema.js             # Runtime JSON schema validation
 ├── src/
-│   ├── App.jsx
-│   ├── main.jsx
-│   └── styles.css
-│
+│   ├── components/
+│   │   ├── Composer.jsx       # Topic input & mode selection
+│   │   ├── Dashboard.jsx      # Analytics, streak, recent activity
+│   │   ├── ExportModal.jsx    # Markdown, JSON, Print export
+│   │   ├── FavoritesDrawer.jsx# Bookmarked cards, questions, sessions
+│   │   ├── FlashcardsView.jsx # 3D flip card active recall
+│   │   ├── Header.jsx         # Mobile topbar & bottom nav
+│   │   ├── HistoryDrawer.jsx  # Searchable study history
+│   │   ├── Icons.jsx          # SVG icon library
+│   │   ├── QuizView.jsx       # Scenario quiz & score screen
+│   │   ├── RetestModal.jsx    # Targeted mistake-based drills
+│   │   └── Sidebar.jsx        # Desktop SaaS sidebar navigation
+│   ├── utils/
+│   │   ├── confetti.js        # Zero-dependency canvas celebration
+│   │   └── storage.js         # Versioned, error-safe localStorage
+│   ├── App.jsx                # Root orchestrator & state manager
+│   ├── main.jsx               # React DOM entry point
+│   └── styles.css             # Production SaaS design system
 ├── .env.example
 ├── .gitignore
-├── index.html
 ├── package.json
-├── package-lock.json
-├── README.md
 └── vite.config.js
 ```
 
 ---
 
-## 🛡️ Security
+## 🔒 Security
 
-The Gemini API key is stored in the server environment and is not exposed to the browser.
-
-The `.env` file is excluded from Git using `.gitignore`.
-
-Only `.env.example` is included in the repository.
-
----
-
-## 🏗️ Production-Style Build
-
-Create a production build with:
-
-```bash
-npm run build
-```
-
-For deployment, keep the backend API running and serve the generated frontend using the preferred static hosting/deployment setup.
-
----
-
-## ⚠️ Known Limitations
-
-- Sessions are not persisted after page reload.
-- No authentication.
-- AI-generated content is not guaranteed to be factually perfect.
-- No streaming is implemented in the core version because reliability and the assignment's time constraint were prioritized.
-
----
-
-## 🤖 AI Usage
-
-AI assistants may be used for scaffolding, debugging, documentation, and prompt refinement.
-
-The final implementation should be understood and manually reviewed by the author.
+- **Server-Side API Keys**: Upstream AI keys remain strictly server-side and are never bundled into client assets.
+- **Git Safety**: `.env` is excluded via `.gitignore`. Only `.env.example` with placeholder credentials is committed.
+- **Input Sanitization**: Request bodies are limited to 32KB and validated for topic length (1–3000 characters).
+- **CORS Restrictions**: Configurable via `FRONTEND_URL` to restrict cross-origin access in production.
 
 ---
 
 ## 📌 Project Status
 
-Built as an SDE internship assignment with a focus on:
-
-**Structured AI → Validated Data → Reliable Interactive UI**
+Engineered as a production-quality SDE internship project demonstrating:
+**React 19 Architecture ➔ Node.js API Gateway ➔ Multi-Provider AI Resilience ➔ Runtime Schema Validation ➔ Interactive SaaS UX**
