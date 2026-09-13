@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "test:drawing": "node test-drawing-sync.mjs"
+    "test:drawing": "node test-drawing-sync.mjs",
+    "test:cursor": "node test-cursor-sync.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
