@@ -259,6 +259,7 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   │   │   ├── ClearConfirmDialog.tsx # Clear confirmation modal
 │   │   │   │   └── Toolbar.tsx         # Floating drawing toolbar
 │   │   │   ├── collaboration/
+│   │   │   │   ├── CursorOverlay.tsx   # GPU-composited remote cursor overlay
 │   │   │   │   └── PresenceBadge.tsx   # Live presence roster & color avatars
 │   │   │   ├── ui/
 │   │   │   │   └── Modal.tsx           # Accessible modal dialog
@@ -296,6 +297,8 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   │   ├── collaboration.ts        # Server-authoritative contracts
 │   │   │   └── index.ts
 │   │   └── server.ts                   # Express + Socket.IO HTTP server
+│   ├── test-drawing-sync.mjs           # Automated drawing sync test suite
+│   ├── test-cursor-sync.mjs            # Automated live cursor test suite
 │   ├── package.json
 │   └── tsconfig.json
 │
