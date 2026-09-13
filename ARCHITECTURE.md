@@ -59,10 +59,26 @@ interface Collaborator {
 }
 ```
 
-### 2.3 Room State & Auto-Eviction
-- In-memory `RoomManager` maintains `rooms: Map<string, Room>`.
-- Inverted index `socketToRoom: Map<string, string>` enables $O(1)$ cleanup when a socket disconnects.
-- When the last user leaves a room, `deleteRoomIfEmpty` purges the room record immediately to release server memory.
+### 2.3 Room Manager & Lifecycle (`RoomManager`)
+The in-memory `RoomManager` acts as the single source of truth on the server:
+- `createRoom(roomId)`: Instantiates isolated room state containers.
+- `addUser(roomId, user)`: Adds collaborator to the room's user map.
+- `removeUser(roomId, userId)`: Removes collaborator and invokes cleanup.
+- **Automatic Resource Cleanup**: When the last participant leaves a room, `deleteRoomIfEmpty` removes the room entry from memory, preventing resource leaks.
+
+### 2.4 Event Protocol & Runtime Validation
+All client-to-server events undergo strict runtime shape validation before processing:
+- `JOIN_ROOM`: Payload `{ roomId, displayName }` validated against length limits and regex bounds (`[A-Z0-9_-]`). Malformed payloads trigger an immediate `ERROR` event without crashing the process.
+- `ROOM_JOINED`: Server acknowledges joining socket with `{ roomId, user, collaborators }`.
+- `USER_JOINED`: Server broadcasts `{ user }` strictly to peers in the same room.
+- `USER_LEFT`: Server broadcasts `{ userId }` on disconnect to remaining room members.
+- `ERROR`: Structured error response `{ code, message }` (e.g., `INVALID_ROOM_ID`, `INVALID_DISPLAY_NAME`).
+
+### 2.5 Reconnection & Duplicate Prevention
+- On the client, `createCollaborationClient` listens to Socket.IO reconnect events.
+- Upon reconnect, the client automatically re-emits `JOIN_ROOM` with the newly assigned socket ID.
+- The server checks whether the socket was previously registered in a room and cleans up prior associations before re-admitting, ensuring zero duplicate presence entries.
+- Dedicated teardown functions unbind all socket event listeners upon React component unmount, preventing memory leaks and listener accumulation.
 
 ---
 
@@ -152,30 +168,9 @@ When a new collaborator joins a room that already contains drawings:
 - **Deduplication**: Both server and client check stroke ID existence prior to committing strokes, preventing duplicate entries during network retries.
 - **Out-of-Order Handling**: If `DRAW_UPDATE` arrives for an unrecognized or finalized stroke, it is safely ignored without throwing uncaught exceptions.
 
-### 2.3 Room Manager & Lifecycle (`RoomManager`)
-The in-memory `RoomManager` acts as the single source of truth on the server:
-- `createRoom(roomId)`: Instantiates isolated room state containers.
-- `addUser(roomId, user)`: Adds collaborator to the room's user map.
-- `removeUser(roomId, userId)`: Removes collaborator and invokes cleanup.
-- **Automatic Resource Cleanup**: When the last participant leaves a room, `deleteRoomIfEmpty` removes the room entry from memory, preventing resource leaks.
-
-### 2.4 Event Protocol & Runtime Validation
-All client-to-server events undergo strict runtime shape validation before processing:
-- `JOIN_ROOM`: Payload `{ roomId, displayName }` validated against length limits and regex bounds (`[A-Z0-9_-]`). Malformed payloads trigger an immediate `ERROR` event without crashing the process.
-- `ROOM_JOINED`: Server acknowledges joining socket with `{ roomId, user, collaborators }`.
-- `USER_JOINED`: Server broadcasts `{ user }` strictly to peers in the same room.
-- `USER_LEFT`: Server broadcasts `{ userId }` on disconnect to remaining room members.
-- `ERROR`: Structured error response `{ code, message }` (e.g., `INVALID_ROOM_ID`, `INVALID_DISPLAY_NAME`).
-
-### 2.5 Reconnection & Duplicate Prevention
-- On the client, `createCollaborationClient` listens to Socket.IO reconnect events.
-- Upon reconnect, the client automatically re-emits `JOIN_ROOM` with the newly assigned socket ID.
-- The server checks whether the socket was previously registered in a room and cleans up prior associations before re-admitting, ensuring zero duplicate presence entries.
-- Dedicated teardown functions unbind all socket event listeners upon React component unmount, preventing memory leaks and listener accumulation.
-
 ---
 
-## 3. Drawing Operations Architecture (Section 4)
+## 4. Drawing Operations Architecture (Section 4)
 
 Section 4 established the local drawing environment modeled around reversible operational deltas:
 
