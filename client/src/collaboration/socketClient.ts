@@ -250,6 +250,15 @@ export function createCollaborationClient(
     options.onCursorUpdate?.(data);
   };
 
+  const handleOperationApplied = (data: OperationAppliedData) => {
+    options.onOperationApplied?.(data);
+  };
+
+  const sendOperation = (operation: CollaborativeOperation) => {
+    flushBatch();
+    socket.emit('OPERATION_APPLY', { operation });
+  };
+
   // Register listeners cleanly
   socket.on('connect', handleConnect);
   socket.on('disconnect', handleDisconnect);
@@ -267,6 +276,7 @@ export function createCollaborationClient(
   socket.on('DRAW_END', handleDrawEnd);
   socket.on('ERASE_STROKES', handleEraseStrokes);
   socket.on('CURSOR_UPDATE', handleCursorUpdate);
+  socket.on('OPERATION_APPLIED', handleOperationApplied);
 
   return {
     socket,
@@ -275,6 +285,7 @@ export function createCollaborationClient(
     sendDrawEnd,
     sendEraseStrokes,
     sendCursorMove,
+    sendOperation,
     disconnect: () => {
       if (batchTimer !== null) {
         clearTimeout(batchTimer);
@@ -302,6 +313,7 @@ export function createCollaborationClient(
       socket.off('DRAW_END', handleDrawEnd);
       socket.off('ERASE_STROKES', handleEraseStrokes);
       socket.off('CURSOR_UPDATE', handleCursorUpdate);
+      socket.off('OPERATION_APPLIED', handleOperationApplied);
 
       socket.disconnect();
     },
