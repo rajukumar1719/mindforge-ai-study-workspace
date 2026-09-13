@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test:drawing": "node test-drawing-sync.mjs",
     "test:cursor": "node test-cursor-sync.mjs",
-    "test:history": "node test-collaborative-history.mjs"
+    "test:history": "node test-collaborative-history.mjs",
+    "test:reconnect": "node test-reconnect-sync.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
