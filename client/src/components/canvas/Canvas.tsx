@@ -424,32 +424,5 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
     </div>
   );
 });
-      className="relative w-full h-full flex-1 overflow-hidden select-none bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:24px_24px] bg-slate-50"
-    >
-      <canvas
-        ref={canvasRef}
-        role="img"
-        aria-label="Collaborative drawing canvas surface. Draw or erase freely with mouse, stylus, or touch."
-        tabIndex={0}
-        style={{ touchAction: 'none' }}
-        className={`block w-full h-full focus:outline-none focus:ring-2 focus:ring-indigo-500/30 ${
-          isEraserActive ? 'cursor-cell' : 'cursor-crosshair'
-        }`}
-      />
-
-      {/* Subtle non-intrusive empty canvas hint */}
-      {isEmpty && (
-        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/80 border border-slate-200/80 shadow-xs text-xs font-medium text-slate-400 backdrop-blur-xs">
-            <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-            </svg>
-            <span>Start drawing anywhere with pen, highlighter, or touch</span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-});
 
 Canvas.displayName = 'Canvas';
