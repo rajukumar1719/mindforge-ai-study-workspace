@@ -1,6 +1,7 @@
 import type { CollaborativeOperation, CollaborativeOperationType } from './types';
 
 export const PENDING_OPERATIONS_STORAGE_KEY = 'syncdraw:pending-operations:v1';
+export const MAX_PENDING_OPERATIONS = 500;
 
 export interface PendingOperationRecord {
   roomId: string;
@@ -128,11 +129,21 @@ export function writePendingRecordsToStorage(
       (r) => !(r.roomId === roomId && r.userSessionId === userSessionId)
     );
 
-    const merged = [...otherRecords, ...recordsForCurrentScope];
+    // Enforce capacity bounds (most recent operations kept)
+    const boundedCurrent = recordsForCurrentScope.slice(-MAX_PENDING_OPERATIONS);
+    const merged = [...otherRecords, ...boundedCurrent];
+
     if (merged.length === 0) {
       localStorage.removeItem(PENDING_OPERATIONS_STORAGE_KEY);
     } else {
-      localStorage.setItem(PENDING_OPERATIONS_STORAGE_KEY, JSON.stringify(merged));
+      try {
+        localStorage.setItem(PENDING_OPERATIONS_STORAGE_KEY, JSON.stringify(merged));
+      } catch (storageErr) {
+        console.warn(
+          '[PendingQueue] localStorage quota exceeded or storage unavailable; operations retained in memory only:',
+          storageErr
+        );
+      }
     }
   } catch (err) {
     console.error('[PendingQueue] Error writing pending operations to storage:', err);
@@ -212,6 +223,14 @@ export class PendingOperationQueue {
    * Enqueues an operation locally with immediate durable persistence.
    */
   public enqueue(op: CollaborativeOperation): void {
+    // Enforce max pending operations cap
+    if (this.records.length >= MAX_PENDING_OPERATIONS) {
+      console.warn(
+        `[PendingQueue] Queue reached maximum capacity of ${MAX_PENDING_OPERATIONS} operations. Dropping operation ${op.operationId}.`
+      );
+      return;
+    }
+
     // Avoid duplicate enqueuing of the same operationId
     const existingIndex = this.records.findIndex((r) => r.operation.operationId === op.operationId);
     if (existingIndex >= 0) {

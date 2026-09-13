@@ -15,9 +15,47 @@ const config: ServerConfig = {
 
 const app = express();
 
-// Middlewares
+// Security: Disable Express server signature
+app.disable('x-powered-by');
+
+// Security: HTTP Security Headers
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+  res.setHeader('X-XSS-Protection', '0');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  next();
+});
+
+// Configurable CORS Origin Verification
+const configuredOrigins = config.clientUrl
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+export const isOriginAllowed = (origin: string | undefined): boolean => {
+  // Allow non-browser requests without origin header (e.g., health probes, server-to-server)
+  if (!origin) return true;
+  if (configuredOrigins.includes(origin)) return true;
+  // In development mode, allow any local loopback origin
+  if (config.nodeEnv !== 'production') {
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  }
+  return false;
+};
+
 app.use(cors({
-  origin: config.clientUrl,
+  origin: (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Origin not allowed by CORS: ${origin}`));
+    }
+  },
   credentials: true,
 }));
 app.use(express.json());
@@ -54,7 +92,13 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 // HTTP Server & WebSocket Server
 const httpServer = http.createServer(app);
-const io = initSocketServer(httpServer, config.clientUrl);
+const io = initSocketServer(httpServer, (origin, callback) => {
+  if (isOriginAllowed(origin)) {
+    callback(null, true);
+  } else {
+    callback(new Error(`Origin not allowed by CORS: ${origin}`));
+  }
+});
 
 const server = httpServer.listen(config.port, () => {
   console.log(`[SyncDraw Server] Running in ${config.nodeEnv} mode`);

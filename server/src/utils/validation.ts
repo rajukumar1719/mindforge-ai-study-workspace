@@ -11,7 +11,19 @@ import type {
 } from '../types/collaboration.js';
 
 /**
+ * Section 11 Security & Hardening Resource Limits
+ */
+export const MAX_POINTS_PER_UPDATE = 500;
+export const MAX_STROKE_POINTS = 10000;
+export const MAX_ACTIVE_STROKES_PER_USER = 10;
+export const MAX_ACTIVE_STROKES_PER_ROOM = 100;
+export const MAX_USERS_PER_ROOM = 50;
+export const MAX_OPERATIONS_PER_ROOM = 10000;
+export const MAX_STROKES_PER_ROOM = 5000;
+
+/**
  * Validates that a room ID is a non-empty, URL-safe string within reasonable length bounds (3-24 chars).
+ * Strictly enforces alphanumeric characters with underscores and hyphens.
  */
 export function isValidRoomId(roomId: unknown): roomId is string {
   if (typeof roomId !== 'string') return false;
@@ -21,12 +33,23 @@ export function isValidRoomId(roomId: unknown): roomId is string {
 }
 
 /**
- * Validates that a user display name is trimmed, non-empty, and within 2-30 characters.
+ * Strips non-printable control characters, zero-width characters, and normalizes whitespace
+ * while preserving legitimate international Unicode names (accents, Asian scripts, emoji, etc.).
+ */
+export function sanitizeDisplayName(name: unknown): string {
+  if (typeof name !== 'string') return '';
+  // Strip ASCII and Unicode control characters and zero-width spaces
+  const stripped = name.replace(/[\x00-\x1F\x7F-\x9F\u200B-\u200D\uFEFF]/g, '');
+  // Collapse multiple whitespace characters to single space and trim
+  return stripped.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Validates that a user display name, after stripping control characters, is between 2 and 30 characters.
  */
 export function isValidDisplayName(name: unknown): name is string {
-  if (typeof name !== 'string') return false;
-  const trimmed = name.trim();
-  return trimmed.length >= 2 && trimmed.length <= 30;
+  const sanitized = sanitizeDisplayName(name);
+  return sanitized.length >= 2 && sanitized.length <= 30;
 }
 
 export interface ValidationResult<T> {
@@ -40,6 +63,7 @@ export interface ValidationResult<T> {
 
 /**
  * Validates the runtime shape of the JOIN_ROOM payload safely without blind casting.
+ * Sanitizes the display name to remove control characters.
  */
 export function validateJoinRoomPayload(payload: unknown): ValidationResult<JoinRoomPayload> {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -64,7 +88,8 @@ export function validateJoinRoomPayload(payload: unknown): ValidationResult<Join
     };
   }
 
-  if (!isValidDisplayName(raw['displayName'])) {
+  const sanitizedName = sanitizeDisplayName(raw['displayName']);
+  if (sanitizedName.length < 2 || sanitizedName.length > 30) {
     return {
       valid: false,
       error: {
@@ -78,7 +103,7 @@ export function validateJoinRoomPayload(payload: unknown): ValidationResult<Join
     valid: true,
     data: {
       roomId: (raw['roomId'] as string).trim().toUpperCase(),
-      displayName: (raw['displayName'] as string).trim(),
+      displayName: sanitizedName,
     },
   };
 }

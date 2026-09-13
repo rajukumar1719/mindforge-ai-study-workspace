@@ -18,10 +18,11 @@ import {
   validateOperationApplyPayload,
 } from '../utils/validation.js';
 import { assignCollaboratorColor } from '../utils/colors.js';
+import { socketRateLimiter } from '../security/rateLimiter.js';
 
 export function initSocketServer(
   httpServer: HttpServer,
-  clientUrl: string
+  allowedOrigin: string | string[] | ((origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => void)
 ): SocketIOServer<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData> {
   const io = new SocketIOServer<
     ClientToServerEvents,
@@ -30,7 +31,7 @@ export function initSocketServer(
     SocketData
   >(httpServer, {
     cors: {
-      origin: clientUrl,
+      origin: allowedOrigin as string,
       methods: ['GET', 'POST'],
       credentials: true,
     },
@@ -40,6 +41,15 @@ export function initSocketServer(
   io.on('connection', (socket) => {
     // 1. JOIN_ROOM Handler
     socket.on('JOIN_ROOM', (rawPayload) => {
+      // Rate limit check: prevent rapid-fire join/flood abuse
+      if (!socketRateLimiter.consume(socket.id, 'joinRoom')) {
+        socket.emit('ERROR', {
+          code: 'RATE_LIMITED',
+          message: 'Room join rate limit exceeded. Please wait a moment before trying again.',
+        });
+        return;
+      }
+
       // Validate incoming payload safely without blind casting
       const validation = validateJoinRoomPayload(rawPayload);
       if (!validation.valid || !validation.data) {
@@ -73,11 +83,19 @@ export function initSocketServer(
         joinedAt: Date.now(),
       };
 
-      // Store in socket session data and room manager
+      // Add user to room with capacity check
+      const addResult = roomManager.addUser(roomId, collaborator);
+      if (!addResult.success) {
+        socket.emit('ERROR', addResult.error || {
+          code: 'ROOM_FULL',
+          message: 'Room has reached maximum allowed collaborator limit.',
+        });
+        return;
+      }
+
+      // Store in socket session data and join room
       socket.data.roomId = roomId;
       socket.data.user = collaborator;
-
-      roomManager.addUser(roomId, collaborator);
       socket.join(roomId);
 
       // Acknowledge joining socket with room state and roster
@@ -130,7 +148,7 @@ export function initSocketServer(
 
       const { strokeId, tool, color, width, point } = validation.data;
 
-      // Track active stroke in server room
+      // Track active stroke in server room with capacity checks
       const newStroke: Stroke = {
         id: strokeId,
         userId: user.id, // Authoritative server ID
@@ -141,7 +159,14 @@ export function initSocketServer(
         createdAt: Date.now(),
       };
 
-      roomManager.startStroke(roomId, newStroke);
+      const startResult = roomManager.startStroke(roomId, newStroke);
+      if (!startResult.success) {
+        socket.emit('ERROR', startResult.error || {
+          code: 'DRAW_REJECTED',
+          message: 'Could not start stroke.',
+        });
+        return;
+      }
 
       // Broadcast exclusively to other clients in this room (avoid echo)
       socket.to(roomId).emit('DRAW_START', {
@@ -159,7 +184,22 @@ export function initSocketServer(
       const roomId = socket.data.roomId;
       const user = socket.data.user;
 
-      if (!roomId || !user) return;
+      if (!roomId || !user) {
+        socket.emit('ERROR', {
+          code: 'UNAUTHORIZED_ACTION',
+          message: 'Must join a room before drawing.',
+        });
+        return;
+      }
+
+      // Rate limit check: prevent flooding of point updates
+      if (!socketRateLimiter.consume(socket.id, 'drawUpdate')) {
+        socket.emit('ERROR', {
+          code: 'RATE_LIMITED',
+          message: 'Drawing update rate limit exceeded.',
+        });
+        return;
+      }
 
       const validation = validateDrawUpdatePayload(rawPayload);
       if (!validation.valid || !validation.data) {
@@ -184,7 +224,13 @@ export function initSocketServer(
       const roomId = socket.data.roomId;
       const user = socket.data.user;
 
-      if (!roomId || !user) return;
+      if (!roomId || !user) {
+        socket.emit('ERROR', {
+          code: 'UNAUTHORIZED_ACTION',
+          message: 'Must join a room before drawing.',
+        });
+        return;
+      }
 
       const validation = validateDrawEndPayload(rawPayload);
       if (!validation.valid || !validation.data) return;
@@ -206,7 +252,21 @@ export function initSocketServer(
       const roomId = socket.data.roomId;
       const user = socket.data.user;
 
-      if (!roomId || !user) return;
+      if (!roomId || !user) {
+        socket.emit('ERROR', {
+          code: 'UNAUTHORIZED_ACTION',
+          message: 'Must join a room before erasing.',
+        });
+        return;
+      }
+
+      if (!socketRateLimiter.consume(socket.id, 'operation')) {
+        socket.emit('ERROR', {
+          code: 'RATE_LIMITED',
+          message: 'Operation rate limit exceeded.',
+        });
+        return;
+      }
 
       const validation = validateEraseStrokesPayload(rawPayload);
       if (!validation.valid || !validation.data) return;
@@ -237,6 +297,11 @@ export function initSocketServer(
         return;
       }
 
+      // Rate limit check: drop excess cursor events silently to prevent event loop saturation
+      if (!socketRateLimiter.consume(socket.id, 'cursor')) {
+        return;
+      }
+
       const validation = validateCursorMovePayload(rawPayload);
       if (!validation.valid || !validation.data) {
         return; // Drop malformed cursor coordinates safely without crashing
@@ -260,6 +325,26 @@ export function initSocketServer(
         socket.emit('ERROR', {
           code: 'UNAUTHORIZED_ACTION',
           message: 'Must join a room before submitting operations.',
+        });
+        return;
+      }
+
+      // Rate limit check: operations flood protection
+      if (!socketRateLimiter.consume(socket.id, 'operation')) {
+        const rawOp =
+          typeof rawPayload === 'object' && rawPayload !== null && 'operation' in rawPayload
+            ? (rawPayload as { operation?: { operationId?: string } }).operation
+            : undefined;
+        const opId = rawOp?.operationId || '';
+
+        socket.emit('OPERATION_ACK', {
+          operationId: opId,
+          accepted: false,
+          reason: 'RATE_LIMITED',
+        });
+        socket.emit('ERROR', {
+          code: 'RATE_LIMITED',
+          message: 'Operation rate limit exceeded. Please wait before submitting more operations.',
         });
         return;
       }
@@ -330,8 +415,11 @@ export function initSocketServer(
       });
     });
 
-    // 7. Disconnect Handler
+    // 8. Disconnect Handler
     socket.on('disconnect', (reason) => {
+      // Clear socket rate limiter state
+      socketRateLimiter.clearSocket(socket.id);
+
       const roomId = socket.data.roomId;
       const user = socket.data.user;
 

@@ -1,5 +1,12 @@
 import type { Room, Collaborator, Stroke, Point, CollaborativeOperation, OperationRecord } from '../types/collaboration.js';
 import { createRoomState, reconstructRoomStrokes } from './roomState.js';
+import {
+  MAX_USERS_PER_ROOM,
+  MAX_ACTIVE_STROKES_PER_USER,
+  MAX_ACTIVE_STROKES_PER_ROOM,
+  MAX_OPERATIONS_PER_ROOM,
+  MAX_STROKES_PER_ROOM,
+} from '../utils/validation.js';
 
 /**
  * In-Memory Room Manager
@@ -51,10 +58,23 @@ export class RoomManager {
     this.roomCleanupTimers.set(roomId, timer);
   }
 
-  public addUser(roomId: string, user: Collaborator): void {
+  public addUser(roomId: string, user: Collaborator): { success: boolean; error?: { code: string; message: string } } {
     this.cancelRoomCleanup(roomId);
     const room = this.getOrCreateRoom(roomId);
+
+    // Enforce maximum collaborators per room
+    if (!room.users.has(user.id) && room.users.size >= MAX_USERS_PER_ROOM) {
+      return {
+        success: false,
+        error: {
+          code: 'ROOM_FULL',
+          message: `Room has reached maximum limit of ${MAX_USERS_PER_ROOM} collaborators.`,
+        },
+      };
+    }
+
     room.users.set(user.id, user);
+    return { success: true };
   }
 
   public removeUser(roomId: string, userId: string): boolean {
@@ -102,9 +122,38 @@ export class RoomManager {
   }
 
   // Drawing State Management
-  public startStroke(roomId: string, stroke: Stroke): void {
+  public startStroke(roomId: string, stroke: Stroke): { success: boolean; error?: { code: string; message: string } } {
     const room = this.getOrCreateRoom(roomId);
+
+    if (room.activeStrokes.size >= MAX_ACTIVE_STROKES_PER_ROOM) {
+      return {
+        success: false,
+        error: {
+          code: 'MAX_ACTIVE_STROKES_EXCEEDED',
+          message: `Room exceeds maximum allowed in-flight strokes (${MAX_ACTIVE_STROKES_PER_ROOM}).`,
+        },
+      };
+    }
+
+    let userActiveCount = 0;
+    for (const active of room.activeStrokes.values()) {
+      if (active.userId === stroke.userId) {
+        userActiveCount++;
+      }
+    }
+
+    if (userActiveCount >= MAX_ACTIVE_STROKES_PER_USER) {
+      return {
+        success: false,
+        error: {
+          code: 'MAX_USER_ACTIVE_STROKES',
+          message: `User exceeds maximum allowed in-flight strokes (${MAX_ACTIVE_STROKES_PER_USER}).`,
+        },
+      };
+    }
+
     room.activeStrokes.set(stroke.id, stroke);
+    return { success: true };
   }
 
   public appendStrokePoints(roomId: string, strokeId: string, points: Point[]): boolean {
@@ -233,6 +282,28 @@ export class RoomManager {
         duplicate: true,
         record: existingRecord,
         error: { code: 'DUPLICATE_OPERATION', message: `Operation ${op.operationId} has already been applied.` },
+      };
+    }
+
+    // Resource limit: maximum operations per room
+    if (room.operations.length >= MAX_OPERATIONS_PER_ROOM) {
+      return {
+        success: false,
+        error: {
+          code: 'MAX_OPERATIONS_EXCEEDED',
+          message: `Room has reached maximum allowed operation history (${MAX_OPERATIONS_PER_ROOM}).`,
+        },
+      };
+    }
+
+    // Resource limit: maximum strokes per room on add-stroke
+    if (op.type === 'add-stroke' && room.strokes.length >= MAX_STROKES_PER_ROOM) {
+      return {
+        success: false,
+        error: {
+          code: 'MAX_STROKES_EXCEEDED',
+          message: `Room has reached maximum allowed stroke limit (${MAX_STROKES_PER_ROOM}).`,
+        },
       };
     }
 
