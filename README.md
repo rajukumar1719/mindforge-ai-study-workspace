@@ -14,7 +14,7 @@ SyncDraw is designed as a high-performance, real-time collaborative whiteboard p
 
 SyncDraw is currently in active stage-by-stage development.
 
-### Implemented Features (Sections 1 – 6)
+### Implemented Features (Sections 1 – 7)
 - **Full-Stack TypeScript Architecture**: Monorepo structure using npm workspaces (`client/` and `server/`), strict TypeScript, and ESLint.
 - **Backend Infrastructure**: Node.js + Express REST gateway with `/health` monitoring, CORS handling, and graceful shutdown.
 - **Product Landing Page**: Responsive hero, brand wordmark, capabilities preview, and static architectural illustration.
@@ -48,6 +48,13 @@ SyncDraw is currently in active stage-by-stage development.
   - **Late-Join Initial State Hydration (`SYNC_STATE`)**: Late-joining participants immediately receive the room's canonical strokes on join.
   - **Strict Room Isolation**: Drawing events are routed exclusively to peers in the same room.
   - **Defensive Validation & Ghost Stroke Elimination**: Rigorous validation on stroke IDs, tools, colors, and coordinates; incomplete strokes from disconnected clients are cleanly finalized and purged.
+- **Live Collaborative Cursors & Presence Polish (Section 7)**:
+  - **Multiplayer Cursor Tracking**: Real-time cursor coordinates broadcast via `CURSOR_MOVE` and `CURSOR_UPDATE` with zero sender echo and room isolation.
+  - **Network Throttling**: Client-side 30ms rate-limiting and distance threshold filtering to eliminate unnecessary network traffic.
+  - **Decoupled GPU Overlay**: Cursors render in a dedicated DOM overlay (`<CursorOverlay>`) using CSS 3D transforms (`translate3d`), completely decoupled from canvas redraws and React render cycles.
+  - **Inactivity Staleness Fading**: Cursors automatically fade to zero opacity after 6 seconds of inactivity, while maintaining active room presence.
+  - **Ghost Cursor Cleanup**: Instant cursor element removal and timer teardown on user disconnect (`USER_LEFT`) and room exit.
+  - **Polished Presence Roster**: Avatar circles render the user's uppercase initials against their server-assigned color with an active green connection dot and local `(You)` badge.
 
 ---
 
@@ -55,7 +62,6 @@ SyncDraw is currently in active stage-by-stage development.
 
 The following features are planned for upcoming development sections:
 
-- **Live Collaborative Cursors** *(Planned)*: Synchronized multiplayer mouse cursors displaying teammate names and distinct user color tags.
 - **Collaborative State History** *(Planned)*: Synchronized undo/redo trees, conflict resolution, and deterministic canvas convergence.
 - **Geometric Shapes & Annotations** *(Planned)*: Rectangle, ellipse, arrow, and text annotation tools.
 - **Room State Persistence** *(Planned)*: Server-side room snapshot storage and historical action replay for late-joining clients.
@@ -149,6 +155,16 @@ npm run lint
 
 # Build both client and server for production
 npm run build
+```
+
+### Automated Real-Time Test Suites
+
+```bash
+# Run automated drawing synchronization test suite (11 test cases)
+npm run test:drawing -w server
+
+# Run automated live cursor synchronization test suite (7 test cases)
+npm run test:cursor -w server
 ```
 
 ---
