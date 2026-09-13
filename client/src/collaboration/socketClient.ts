@@ -2,6 +2,7 @@ import { io, Socket } from 'socket.io-client';
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
+  ConnectionState,
   ConnectionStatus,
   RoomJoinedData,
   UserJoinedData,
@@ -17,6 +18,7 @@ import type {
   CursorUpdateData,
   CollaborativeOperation,
   OperationAppliedData,
+  OperationAckData,
 } from './types';
 import type { Point } from '../canvas';
 
@@ -24,7 +26,7 @@ export interface CollaborationClientOptions {
   serverUrl?: string;
   roomId: string;
   displayName: string;
-  onStatusChange: (status: ConnectionStatus) => void;
+  onStatusChange: (status: ConnectionState) => void;
   onRoomJoined: (data: RoomJoinedData) => void;
   onUserJoined: (data: UserJoinedData) => void;
   onUserLeft: (data: UserLeftData) => void;
@@ -36,6 +38,7 @@ export interface CollaborationClientOptions {
   onEraseStrokes?: (data: EraseStrokesData) => void;
   onCursorUpdate?: (data: CursorUpdateData) => void;
   onOperationApplied?: (data: OperationAppliedData) => void;
+  onOperationAck?: (data: OperationAckData) => void;
 }
 
 export interface CollaborationClient {
@@ -47,6 +50,7 @@ export interface CollaborationClient {
   sendEraseStrokes: (payload: EraseStrokesPayload) => void;
   sendCursorMove: (x: number, y: number) => void;
   sendOperation: (operation: CollaborativeOperation) => void;
+  getConnectionState: () => ConnectionState;
 }
 
 /**
