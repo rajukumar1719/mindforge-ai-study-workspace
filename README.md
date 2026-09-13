@@ -14,7 +14,7 @@ SyncDraw is designed as a high-performance, real-time collaborative whiteboard p
 
 SyncDraw is currently in active stage-by-stage development.
 
-### Implemented Features (Sections 1 – 3)
+### Implemented Features (Sections 1 – 4)
 - **Full-Stack TypeScript Architecture**: Monorepo structure using npm workspaces (`client/` and `server/`), strict TypeScript, and ESLint.
 - **Backend Foundation**: Node.js + Express REST gateway with `/health` monitoring, CORS handling, and graceful shutdown.
 - **Product Landing Page**: Responsive hero, brand wordmark, capabilities preview, and static architectural illustration.
@@ -23,15 +23,17 @@ SyncDraw is currently in active stage-by-stage development.
   - Join Room: Room code validation and uppercase normalization.
   - Direct Link Handling: Automatic participant name prompt for direct `/room/:roomId` links.
 - **Accessible Modal System**: Focus trapping, `Escape` key dismissal, backdrop click handling, and ARIA attributes.
-- **Local Canvas Drawing Engine (Section 3)**:
-  - High-performance HTML5 Canvas 2D engine decoupled from React re-renders.
-  - Unified Pointer Events (`pointerdown`, `pointermove`, `pointerup`, `pointercancel`) supporting mouse, touch, and stylus.
-  - Smooth quadratic Bézier curve interpolation for fluid whiteboard stroke rendering.
-  - High-DPI / Retina resolution scaling (`devicePixelRatio` correction).
-  - Dynamic `ResizeObserver` maintaining stroke integrity and redrawing without loss.
-  - Professional floating toolbar with Pen tool, 6-color palette (`Charcoal`, `Indigo`, `Rose`, `Emerald`, `Amber`, `Violet`), and 4 brush sizes (`2px`, `4px`, `8px`, `14px`).
-  - Subtle empty state guide (*"Start drawing anywhere..."*) that dismisses on first stroke.
-  - Canonical immutable stroke data model ready for WebSocket delta sync.
+- **Core Canvas Engine**: Native HTML5 Canvas 2D engine with unified Pointer Events, high-DPI retina scaling, `ResizeObserver` resilience, and quadratic Bézier curve smoothing.
+- **Complete Local Drawing Toolset (Section 4)**:
+  - **Pen Tool**: Fluid, opaque vector strokes with round caps and joins.
+  - **Highlighter Tool**: Semi-transparent rendering (`0.35` alpha), wider brush presets, smooth curve smoothing.
+  - **Stroke-Level Eraser**: Real-time geometric intersection hit testing that cleanly removes touched strokes.
+  - **Color Palette**: 6 curated presets (`Charcoal`, `Indigo`, `Rose`, `Emerald`, `Amber`, `Violet`) with active indicators (disabled during erasing).
+  - **Brush Sizing**: 5 presets (`2px Fine`, `4px Normal`, `8px Medium`, `14px Broad`, `24px Heavy`) affecting Pen, Highlighter, and Eraser.
+  - **Logical Undo / Redo**: Operation history stack tracking reversible additions, deletions, and clears without memory-heavy raster snapshots.
+  - **Clear Canvas Confirmation**: Accessible dialog with keyboard confirmation (`Enter`) and dismissal (`Escape`). Clear is also undoable!
+  - **PNG Blob Export**: 1-click standalone canvas snapshot download without UI chrome (`syncdraw-{roomId}.png`).
+  - **Keyboard Shortcuts**: `P` (Pen), `H` (Highlighter), `E` (Eraser), `Ctrl/Cmd+Z` (Undo), `Ctrl/Cmd+Shift+Z` (Redo), `Escape` (Close Dialogs). Suppressed when typing in form inputs.
 
 ---
 
@@ -39,12 +41,12 @@ SyncDraw is currently in active stage-by-stage development.
 
 The following features are planned for upcoming development sections:
 
-- **Real-Time Collaboration** *(Planned — Section 4+)*: Bidirectional WebSocket synchronization, low-latency delta broadcasting, and optimistic local rendering.
+- **Real-Time Collaboration** *(Planned — Section 5+)*: Bidirectional WebSocket synchronization, low-latency delta broadcasting, and optimistic local rendering.
 - **Live Collaborative Cursors** *(Planned)*: Synchronized multiplayer mouse cursors displaying teammate names and distinct user color tags.
 - **Collaborator Presence** *(Planned)*: Real-time room participant rosters and presence heartbeats.
-- **Collaborative State Management** *(Planned)*: Undo / Redo history stacks, conflict resolution, and deterministic canvas convergence.
-- **Canvas Expansion Tools** *(Planned)*: Eraser tool, highlighter, geometric shapes (rectangle, circle, arrow), and text annotations.
-- **Persistence & Export** *(Planned)*: Canvas snapshot export to PNG/SVG/JSON, with room state persistence.
+- **Multiplayer Conflict Resolution** *(Planned)*: Collaborative undo/redo trees, operational transforms / CRDT convergence.
+- **Geometric Shapes & Annotations** *(Planned)*: Rectangle, ellipse, arrow, and text annotation tools.
+- **Room State Persistence** *(Planned)*: Server-side room snapshot storage and historical action replay for late-joining clients.
 - **Offline Resilience & Reconnection** *(Planned)*: Reconnection queue buffering drawing actions during network blips.
 
 ---
@@ -54,7 +56,7 @@ The following features are planned for upcoming development sections:
 ### Frontend (`client`)
 - **Framework**: React 19
 - **Routing**: React Router v7 (`react-router-dom`)
-- **Canvas Engine**: Native HTML5 Canvas 2D Context + Quadratic Bézier Smoothing
+- **Canvas Engine**: Native HTML5 Canvas 2D Context + Quadratic Bézier Smoothing + Geometric Hit Testing
 - **Language**: TypeScript (Strict Mode)
 - **Build Tool**: Vite
 - **Styling**: Tailwind CSS v4
@@ -68,6 +70,21 @@ The following features are planned for upcoming development sections:
 
 ---
 
+## Keyboard Shortcuts
+
+| Key | Action | Description |
+|---|---|---|
+| `P` | Pen Tool | Selects standard drawing pen |
+| `H` | Highlighter Tool | Selects semi-transparent highlighter |
+| `E` | Eraser Tool | Selects stroke-level object eraser |
+| `Ctrl+Z` / `Cmd+Z` | Undo | Reverts previous drawing / erasing operation |
+| `Ctrl+Shift+Z` / `Cmd+Shift+Z` | Redo | Restores previously undone operation |
+| `Escape` | Close Dialog | Closes open modals or confirmation dialogs |
+
+*Note: Drawing shortcuts are automatically disabled while focused on text input fields.*
+
+---
+
 ## Development Setup
 
 ### Prerequisites
@@ -76,16 +93,12 @@ The following features are planned for upcoming development sections:
 
 ### Installation
 
-Clone the repository and install dependencies from the project root:
-
 ```bash
-# Install dependencies for both client and server workspaces
+# Install dependencies across client and server workspaces
 npm install
 ```
 
 ### Environment Configuration
-
-Copy the example environment configuration files:
 
 ```bash
 # Client configuration
@@ -96,8 +109,6 @@ cp server/.env.example server/.env
 ```
 
 ### Running in Development
-
-Run both client and server concurrently:
 
 ```bash
 npm run dev
