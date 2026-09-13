@@ -28,7 +28,31 @@ export class RoomManager {
     return this.createRoom(roomId);
   }
 
+  private roomCleanupTimers = new Map<string, NodeJS.Timeout>();
+
+  public cancelRoomCleanup(roomId: string): void {
+    const timer = this.roomCleanupTimers.get(roomId);
+    if (timer) {
+      clearTimeout(timer);
+      this.roomCleanupTimers.delete(roomId);
+    }
+  }
+
+  public scheduleRoomCleanup(roomId: string, delayMs = 120000): void {
+    this.cancelRoomCleanup(roomId);
+    const timer = setTimeout(() => {
+      this.roomCleanupTimers.delete(roomId);
+      const room = this.rooms.get(roomId);
+      if (room && room.users.size === 0) {
+        this.rooms.delete(roomId);
+        console.log(`[RoomManager] Room cleaned up after grace period: ${roomId} (Remaining active rooms: ${this.rooms.size})`);
+      }
+    }, delayMs);
+    this.roomCleanupTimers.set(roomId, timer);
+  }
+
   public addUser(roomId: string, user: Collaborator): void {
+    this.cancelRoomCleanup(roomId);
     const room = this.getOrCreateRoom(roomId);
     room.users.set(user.id, user);
   }
@@ -38,8 +62,14 @@ export class RoomManager {
     if (!room) return false;
 
     const removed = room.users.delete(userId);
-    if (removed) {
-      this.deleteRoomIfEmpty(roomId);
+    if (removed && room.users.size === 0) {
+      // If room has persistent history, retain state during temporary reconnects
+      if (room.strokes.length > 0 || room.operations.length > 0) {
+        this.scheduleRoomCleanup(roomId, 120000);
+      } else {
+        this.rooms.delete(roomId);
+        console.log(`[RoomManager] Room cleaned up: ${roomId} (Remaining active rooms: ${this.rooms.size})`);
+      }
     }
     return removed;
   }
@@ -55,6 +85,10 @@ export class RoomManager {
     if (!room) return false;
 
     if (room.users.size === 0) {
+      if (room.strokes.length > 0 || room.operations.length > 0) {
+        this.scheduleRoomCleanup(roomId, 120000);
+        return false;
+      }
       this.rooms.delete(roomId);
       console.log(`[RoomManager] Room cleaned up: ${roomId} (Remaining active rooms: ${this.rooms.size})`);
       return true;
