@@ -73,6 +73,15 @@ export function createCollaborationClient(
     timeout: 10000,
   });
 
+  // Authoritative Connection State Machine
+  let connectionState: ConnectionState = 'connecting';
+  const updateState = (next: ConnectionState) => {
+    if (connectionState !== next) {
+      connectionState = next;
+      options.onStatusChange(next);
+    }
+  };
+
   // Batching state for high-frequency pointer move points
   let currentBatchStrokeId: string | null = null;
   let pendingPoints: Point[] = [];
@@ -93,10 +102,13 @@ export function createCollaborationClient(
     const pointsToSend = pendingPoints;
     pendingPoints = [];
 
-    socket.emit('DRAW_UPDATE', {
-      strokeId,
-      points: pointsToSend,
-    });
+    // Ephemeral point streaming only emitted when connected
+    if (connectionState === 'connected') {
+      socket.emit('DRAW_UPDATE', {
+        strokeId,
+        points: pointsToSend,
+      });
+    }
   };
 
   const sendDrawStart = (payload: DrawStartPayload) => {
@@ -107,7 +119,9 @@ export function createCollaborationClient(
     pendingPoints = [];
     lastEnqueuedPoint = payload.point;
 
-    socket.emit('DRAW_START', payload);
+    if (connectionState === 'connected') {
+      socket.emit('DRAW_START', payload);
+    }
   };
 
   const queueStrokePoint = (strokeId: string, point: Point) => {
@@ -146,11 +160,15 @@ export function createCollaborationClient(
     currentBatchStrokeId = null;
     lastEnqueuedPoint = null;
 
-    socket.emit('DRAW_END', { strokeId });
+    if (connectionState === 'connected') {
+      socket.emit('DRAW_END', { strokeId });
+    }
   };
 
   const sendEraseStrokes = (payload: EraseStrokesPayload) => {
-    socket.emit('ERASE_STROKES', payload);
+    if (connectionState === 'connected') {
+      socket.emit('ERASE_STROKES', payload);
+    }
   };
 
   // Throttling state for high-frequency cursor movements (~30ms = ~33 updates/sec)
@@ -160,7 +178,11 @@ export function createCollaborationClient(
 
   const flushCursorMove = () => {
     cursorThrottleTimer = null;
-    if (!pendingCursorPoint) return;
+    // Ephemeral: completely discard cursor updates when disconnected or offline
+    if (!pendingCursorPoint || connectionState !== 'connected') {
+      pendingCursorPoint = null;
+      return;
+    }
 
     if (lastSentCursorPoint) {
       const dx = pendingCursorPoint.x - lastSentCursorPoint.x;
@@ -175,6 +197,9 @@ export function createCollaborationClient(
   };
 
   const sendCursorMove = (x: number, y: number) => {
+    // Ephemeral guard: Never queue or send cursor position when disconnected
+    if (connectionState !== 'connected') return;
+
     pendingCursorPoint = { x, y };
 
     if (cursorThrottleTimer === null) {
@@ -184,7 +209,7 @@ export function createCollaborationClient(
 
   // 1. Connection lifecycle handlers
   const handleConnect = () => {
-    options.onStatusChange('connected');
+    updateState('connected');
 
     // Automatically emit authoritative JOIN_ROOM on connect and reconnect
     socket.emit('JOIN_ROOM', {
@@ -195,19 +220,46 @@ export function createCollaborationClient(
 
   const handleDisconnect = (reason: string) => {
     if (reason === 'io client disconnect') {
-      options.onStatusChange('disconnected');
+      updateState('disconnected');
+    } else if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      updateState('offline');
     } else {
-      options.onStatusChange('reconnecting');
+      updateState('reconnecting');
     }
   };
 
   const handleConnectError = () => {
-    options.onStatusChange('disconnected');
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      updateState('offline');
+    } else {
+      updateState('reconnecting');
+    }
   };
 
   const handleReconnectAttempt = () => {
-    options.onStatusChange('reconnecting');
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      updateState('offline');
+    } else {
+      updateState('reconnecting');
+    }
   };
+
+  // Browser online/offline event listeners
+  const handleWindowOffline = () => {
+    updateState('offline');
+  };
+
+  const handleWindowOnline = () => {
+    updateState('reconnecting');
+    if (!socket.connected) {
+      socket.connect();
+    }
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('offline', handleWindowOffline);
+    window.addEventListener('online', handleWindowOnline);
+  }
 
   // 2. Business event handlers
   const handleRoomJoined = (data: RoomJoinedData) => {
@@ -258,6 +310,10 @@ export function createCollaborationClient(
     options.onOperationApplied?.(data);
   };
 
+  const handleOperationAck = (data: OperationAckData) => {
+    options.onOperationAck?.(data);
+  };
+
   const sendOperation = (operation: CollaborativeOperation) => {
     flushBatch();
     socket.emit('OPERATION_APPLY', { operation });
@@ -281,6 +337,7 @@ export function createCollaborationClient(
   socket.on('ERASE_STROKES', handleEraseStrokes);
   socket.on('CURSOR_UPDATE', handleCursorUpdate);
   socket.on('OPERATION_APPLIED', handleOperationApplied);
+  socket.on('OPERATION_ACK', handleOperationAck);
 
   return {
     socket,
@@ -290,6 +347,7 @@ export function createCollaborationClient(
     sendEraseStrokes,
     sendCursorMove,
     sendOperation,
+    getConnectionState: () => connectionState,
     disconnect: () => {
       if (batchTimer !== null) {
         clearTimeout(batchTimer);
@@ -299,6 +357,11 @@ export function createCollaborationClient(
       if (cursorThrottleTimer !== null) {
         clearTimeout(cursorThrottleTimer);
         cursorThrottleTimer = null;
+      }
+
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('offline', handleWindowOffline);
+        window.removeEventListener('online', handleWindowOnline);
       }
 
       socket.off('connect', handleConnect);
@@ -318,6 +381,7 @@ export function createCollaborationClient(
       socket.off('ERASE_STROKES', handleEraseStrokes);
       socket.off('CURSOR_UPDATE', handleCursorUpdate);
       socket.off('OPERATION_APPLIED', handleOperationApplied);
+      socket.off('OPERATION_ACK', handleOperationAck);
 
       socket.disconnect();
     },
