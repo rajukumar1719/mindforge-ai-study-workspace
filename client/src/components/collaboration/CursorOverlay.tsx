@@ -127,12 +127,13 @@ export const CursorOverlay = forwardRef<CursorOverlayRef, CursorOverlayProps>(({
 
   // Clean up all timers and DOM elements on unmount
   useEffect(() => {
+    const map = cursorsMap.current;
     return () => {
-      for (const [, cursorNode] of cursorsMap.current.entries()) {
+      for (const [, cursorNode] of map.entries()) {
         window.clearTimeout(cursorNode.timeoutId);
         cursorNode.el.remove();
       }
-      cursorsMap.current.clear();
+      map.clear();
     };
   }, []);
 
