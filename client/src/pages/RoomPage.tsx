@@ -14,7 +14,11 @@ import {
   findLatestUndoableOperation,
   findLatestRedoableOperation,
 } from '../canvas';
-import { createCollaborationClient, type CollaborationClient } from '../collaboration';
+import {
+  createCollaborationClient,
+  type CollaborationClient,
+  PendingOperationQueue,
+} from '../collaboration';
 import type { UserSession } from '../types';
 import type { Stroke, CanvasSettings, CanvasOperation } from '../canvas';
 import type {
@@ -59,12 +63,39 @@ export const RoomPage: React.FC = () => {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | undefined>(undefined);
 
+  // Durable Client-Side Pending Operation Queue
+  const queueRef = useRef<PendingOperationQueue | null>(null);
+  const [pendingCount, setPendingCount] = useState<number>(0);
+
   const displayName = session?.displayName || '';
   const hasSession = Boolean(session && session.displayName);
 
-  // Author-scoped undo/redo eligibility for the local participant
-  const canUndo = Boolean(currentUserId && findLatestUndoableOperation(operations, currentUserId));
-  const canRedo = Boolean(currentUserId && findLatestRedoableOperation(operations, currentUserId));
+  // Initialize queue and safely recover any persisted offline operations on load/refresh
+  useEffect(() => {
+    if (isRoomValid && roomId && displayName) {
+      const q = new PendingOperationQueue(roomId, displayName);
+      queueRef.current = q;
+      const initialPending = q.getPendingOperations();
+      setPendingCount(initialPending.length);
+
+      if (initialPending.length > 0) {
+        const initialRecords: OperationRecord[] = initialPending.map((op) => ({
+          operation: op,
+          active: true,
+        }));
+        for (const op of initialPending) {
+          appliedOperationIds.current.add(op.operationId);
+        }
+        setOperations(initialRecords);
+        setStrokes(reconstructCanvasState(initialRecords));
+      }
+    }
+  }, [isRoomValid, roomId, displayName]);
+
+  // Author-scoped undo/redo eligibility for the local participant (works both online and offline)
+  const effectiveAuthorId = currentUserId || displayName;
+  const canUndo = Boolean(findLatestUndoableOperation(operations, effectiveAuthorId));
+  const canRedo = Boolean(findLatestRedoableOperation(operations, effectiveAuthorId));
 
   // Establish real-time connection lifecycle strictly when user is in the room
   useEffect(() => {
@@ -97,14 +128,36 @@ export const RoomPage: React.FC = () => {
       },
       onSyncState: (data) => {
         // Hydrate canvas and operation log with room's authoritative state
+        const canonicalOpIds = new Set<string>();
         if (data.operations && data.operations.length > 0) {
           for (const rec of data.operations) {
+            canonicalOpIds.add(rec.operation.operationId);
             appliedOperationIds.current.add(rec.operation.operationId);
           }
-          setOperations(data.operations);
-          setStrokes(reconstructCanvasState(data.operations));
-        } else {
-          setStrokes(data.strokes);
+        }
+
+        // Reconcile local pending queue: drop operations already canonical on server
+        const opsToReplay = queueRef.current?.reconcileWithCanonical(canonicalOpIds) || [];
+        setPendingCount(queueRef.current?.getPendingCount() || 0);
+
+        // Deterministic state reconstruction: canonical server state + local pending operations
+        const pendingOps = queueRef.current?.getPendingOperations() || [];
+        for (const op of pendingOps) {
+          appliedOperationIds.current.add(op.operationId);
+        }
+
+        const combinedOperations: OperationRecord[] = [
+          ...(data.operations || []),
+          ...pendingOps.map((op) => ({ operation: op, active: true })),
+        ];
+
+        setOperations(combinedOperations);
+        setStrokes(reconstructCanvasState(combinedOperations));
+
+        // Replay only missing unacknowledged operations in chronological order
+        for (const op of opsToReplay) {
+          queueRef.current?.markSent(op.operationId);
+          clientRef.current?.sendOperation(op);
         }
       },
       onOperationApplied: (data) => {
@@ -139,6 +192,16 @@ export const RoomPage: React.FC = () => {
           return nextOps;
         });
       },
+      onOperationAck: (ack) => {
+        if (ack.accepted) {
+          queueRef.current?.acknowledge(ack.operationId);
+          setPendingCount(queueRef.current?.getPendingCount() || 0);
+        } else {
+          console.warn(`[Operation Rejected] ${ack.operationId}:`, ack.reason);
+          queueRef.current?.reject(ack.operationId);
+          setPendingCount(queueRef.current?.getPendingCount() || 0);
+        }
+      },
       onDrawStart: (data) => {
         canvasRef.current?.handleRemoteDrawStart(data);
       },
@@ -165,14 +228,49 @@ export const RoomPage: React.FC = () => {
     };
   }, [hasSession, isRoomValid, roomId, displayName]);
 
+  // Unified dispatcher for all local mutations (drawing, erasing, undo, redo, clear)
+  const dispatchLocalOperation = useCallback((colOp: CollaborativeOperation) => {
+    // 1. Enqueue to durable pending queue and persist
+    queueRef.current?.enqueue(colOp);
+    setPendingCount(queueRef.current?.getPendingCount() || 0);
+
+    // 2. Mark applied locally
+    appliedOperationIds.current.add(colOp.operationId);
+
+    // 3. Update local operations and canvas state
+    setOperations((prev) => {
+      let nextOps: OperationRecord[];
+      if (colOp.type === 'undo') {
+        nextOps = prev.map((r) =>
+          r.operation.operationId === colOp.targetOperationId ? { ...r, active: false } : r
+        );
+        nextOps.push({ operation: colOp, active: true });
+      } else if (colOp.type === 'redo') {
+        nextOps = prev.map((r) =>
+          r.operation.operationId === colOp.targetOperationId ? { ...r, active: true } : r
+        );
+        nextOps.push({ operation: colOp, active: true });
+      } else {
+        nextOps = [...prev, { operation: colOp, active: true }];
+      }
+
+      setStrokes(reconstructCanvasState(nextOps));
+      return nextOps;
+    });
+
+    // 4. If connected, dispatch over socket and mark sent
+    if (clientRef.current?.getConnectionState() === 'connected') {
+      queueRef.current?.markSent(colOp.operationId);
+      clientRef.current.sendOperation(colOp);
+    }
+  }, []);
+
   // Handles finalized local drawing strokes
   const handleOperation = useCallback(
     (op: CanvasOperation) => {
       if (op.type === 'add-stroke') {
         const stroke = op.stroke;
         const opId = `op_${stroke.id}`;
-        appliedOperationIds.current.add(opId);
-
         const colOp: CollaborativeOperation = {
           operationId: opId,
           type: 'add-stroke',
@@ -181,74 +279,47 @@ export const RoomPage: React.FC = () => {
           timestamp: stroke.createdAt || Date.now(),
         };
 
-        setOperations((prev) => {
-          if (prev.some((r) => r.operation.operationId === opId)) return prev;
-          return [...prev, { operation: colOp, active: true }];
-        });
-
-        clientRef.current?.sendOperation(colOp);
+        dispatchLocalOperation(colOp);
       }
     },
-    [currentUserId, displayName]
+    [currentUserId, displayName, dispatchLocalOperation]
   );
 
   // Author-scoped Undo: Deactivates current user's latest active operation
   const handleUndo = useCallback(() => {
-    if (!currentUserId) return;
-    const targetOp = findLatestUndoableOperation(operations, currentUserId);
+    const authorId = currentUserId || displayName;
+    const targetOp = findLatestUndoableOperation(operations, authorId);
     if (!targetOp) return;
 
     const undoOpId = `op_undo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const undoOperation: CollaborativeOperation = {
       operationId: undoOpId,
       type: 'undo',
-      userId: currentUserId,
+      userId: authorId,
       targetOperationId: targetOp.operationId,
       timestamp: Date.now(),
     };
 
-    appliedOperationIds.current.add(undoOpId);
-
-    setOperations((prev) => {
-      const updated = prev.map((r) =>
-        r.operation.operationId === targetOp.operationId ? { ...r, active: false } : r
-      );
-      const nextOps = [...updated, { operation: undoOperation, active: true }];
-      setStrokes(reconstructCanvasState(nextOps));
-      return nextOps;
-    });
-
-    clientRef.current?.sendOperation(undoOperation);
-  }, [currentUserId, operations]);
+    dispatchLocalOperation(undoOperation);
+  }, [currentUserId, displayName, operations, dispatchLocalOperation]);
 
   // Author-scoped Redo: Reactivates current user's most recently undone operation
   const handleRedo = useCallback(() => {
-    if (!currentUserId) return;
-    const targetOp = findLatestRedoableOperation(operations, currentUserId);
+    const authorId = currentUserId || displayName;
+    const targetOp = findLatestRedoableOperation(operations, authorId);
     if (!targetOp) return;
 
     const redoOpId = `op_redo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const redoOperation: CollaborativeOperation = {
       operationId: redoOpId,
       type: 'redo',
-      userId: currentUserId,
+      userId: authorId,
       targetOperationId: targetOp.operationId,
       timestamp: Date.now(),
     };
 
-    appliedOperationIds.current.add(redoOpId);
-
-    setOperations((prev) => {
-      const updated = prev.map((r) =>
-        r.operation.operationId === targetOp.operationId ? { ...r, active: true } : r
-      );
-      const nextOps = [...updated, { operation: redoOperation, active: true }];
-      setStrokes(reconstructCanvasState(nextOps));
-      return nextOps;
-    });
-
-    clientRef.current?.sendOperation(redoOperation);
-  }, [currentUserId, operations]);
+    dispatchLocalOperation(redoOperation);
+  }, [currentUserId, displayName, operations, dispatchLocalOperation]);
 
   // Collaborative Clear Canvas: Emits clear-canvas operation preserving history for undo
   const handleConfirmClear = () => {
@@ -261,15 +332,7 @@ export const RoomPage: React.FC = () => {
       timestamp: Date.now(),
     };
 
-    appliedOperationIds.current.add(clearOpId);
-
-    setOperations((prev) => {
-      const nextOps = [...prev, { operation: clearOperation, active: true }];
-      setStrokes(reconstructCanvasState(nextOps));
-      return nextOps;
-    });
-
-    clientRef.current?.sendOperation(clearOperation);
+    dispatchLocalOperation(clearOperation);
   };
 
   // Export PNG
@@ -469,6 +532,7 @@ export const RoomPage: React.FC = () => {
         connectionStatus={connectionStatus}
         collaborators={collaborators}
         currentUserId={currentUserId}
+        pendingCount={pendingCount}
       />
 
       {/* Drawing Canvas Area */}
@@ -511,8 +575,6 @@ export const RoomPage: React.FC = () => {
           onLocalErase={(strokeIds) => {
             if (strokeIds.length > 0) {
               const operationId = `op_erase_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-              appliedOperationIds.current.add(operationId);
-
               const colOp: CollaborativeOperation = {
                 operationId,
                 type: 'erase-strokes',
@@ -521,14 +583,11 @@ export const RoomPage: React.FC = () => {
                 timestamp: Date.now(),
               };
 
-              setOperations((prev) => {
-                const nextOps = [...prev, { operation: colOp, active: true }];
-                setStrokes(reconstructCanvasState(nextOps));
-                return nextOps;
-              });
+              dispatchLocalOperation(colOp);
 
-              clientRef.current?.sendOperation(colOp);
-              clientRef.current?.sendEraseStrokes({ operationId, strokeIds });
+              if (clientRef.current?.getConnectionState() === 'connected') {
+                clientRef.current?.sendEraseStrokes({ operationId, strokeIds });
+              }
             }
           }}
           onLocalCursorMove={(point) => clientRef.current?.sendCursorMove(point.x, point.y)}

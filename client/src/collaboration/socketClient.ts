@@ -3,7 +3,6 @@ import type {
   ClientToServerEvents,
   ServerToClientEvents,
   ConnectionState,
-  ConnectionStatus,
   RoomJoinedData,
   UserJoinedData,
   UserLeftData,
