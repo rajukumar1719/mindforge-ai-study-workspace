@@ -8,15 +8,21 @@ import { ClearConfirmDialog } from '../components/canvas/ClearConfirmDialog';
 import { normalizeRoomId, isValidRoomId } from '../utils/roomId';
 import { getUserSession, setUserSession } from '../utils/storage';
 import {
-  applyOperation,
-  revertOperation,
   exportCanvasToPng,
   TOOL_DEFAULT_WIDTHS,
+  reconstructCanvasState,
+  findLatestUndoableOperation,
+  findLatestRedoableOperation,
 } from '../canvas';
 import { createCollaborationClient, type CollaborationClient } from '../collaboration';
 import type { UserSession } from '../types';
 import type { Stroke, CanvasSettings, CanvasOperation } from '../canvas';
-import type { Collaborator, ConnectionStatus } from '../collaboration';
+import type {
+  Collaborator,
+  ConnectionStatus,
+  CollaborativeOperation,
+  OperationRecord,
+} from '../collaboration';
 
 export const RoomPage: React.FC = () => {
   const { roomId: rawRoomId } = useParams<{ roomId: string }>();
