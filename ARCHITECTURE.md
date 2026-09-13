@@ -32,7 +32,7 @@ Browser A (Room ABC123)       Browser B (Room ABC123)       Browser C (Room XYZ7
 ```
 
 > [!NOTE]
-> **Section 6 Complete**: Real-time collaborative drawing synchronization is fully implemented using structured stroke operations (`DRAW_START`, `DRAW_UPDATE`, `DRAW_END`, `ERASE_STROKES`, and `SYNC_STATE`) over isolated Socket.IO room namespaces. Live multiplayer cursors and collaborative undo/redo are scheduled for subsequent sections.
+> **Section 7 Complete**: Live collaborative cursors and presence polish are fully implemented. Real-time multiplayer cursor movements stream smoothly via throttled Socket.IO events (`CURSOR_MOVE` / `CURSOR_UPDATE`) and render on a dedicated GPU-composited overlay layer (`translate3d`), completely decoupled from canvas redraws and React state churn. Presence displays colored initial avatar bubbles with active status indicators. Collaborative undo/redo and collaborative clear are scheduled for Section 8.
 
 ---
 
@@ -170,16 +170,50 @@ When a new collaborator joins a room that already contains drawings:
 
 ---
 
-## 4. Drawing Operations Architecture (Section 4)
+## 4. Live Collaborative Cursors & Presence Architecture (Section 7)
+
+### 4.1 Protocol & Real-Time Flow
+Multipayer cursor movement is isolated into dedicated lightweight events:
+- **`CURSOR_MOVE` (Client -> Server)**: `{ x: number, y: number }` representing logical canvas CSS coordinates.
+- **`CURSOR_UPDATE` (Server -> Room)**: `{ userId: string, x: number, y: number, timestamp: number }`.
+- **Zero Echo**: Emitted via `socket.to(roomId).emit(...)`, ensuring the broadcaster never receives an echo of their own cursor.
+- **Room Isolation**: Cursors are strictly scoped to the active room namespace; other rooms receive zero cursor traffic.
+
+### 4.2 Throttling & Network Optimization
+Direct pointer move events fire at 60–120Hz. To prevent network congestion and serialization overhead:
+- **Throttling Interval**: Outgoing cursor coordinates are rate-limited to ~30ms intervals (~30 updates/sec).
+- **Movement Threshold Filtering**: Minor sub-pixel vibrations below $1.5\text{px}$ Euclidean distance are dropped if they occur within the throttle window.
+- **Immediate Drag Priority**: When active drawing begins, in-flight coordinate updates flush synchronously without delaying stroke creation.
+
+### 4.3 GPU-Composited Decoupled Cursor Layer
+Rendering remote cursors on the native HTML5 `<canvas>` would force full canvas redraws or complex dirty-rectangle clears at 30–60Hz, degrading drawing performance. SyncDraw completely decouples cursors:
+- **Dedicated DOM Overlay**: `<CursorOverlay>` mounts as an absolute `pointer-events-none` container above the canvas (`z-20`).
+- **Direct Style Mutation**: Incoming `CURSOR_UPDATE` events translate existing DOM nodes directly via `el.style.transform = translate3d(x, y, 0)`, bypassing React re-render cycles entirely.
+- **Hardware Acceleration**: `transform: translate3d(...)` executes on the GPU compositor thread without triggering browser reflows or repaints.
+- **CSS Smoothing**: A subtle `transform 60ms linear` transition provides smooth interpolation between discrete network packets.
+
+### 4.4 Inactivity Staleness & Lifecycle Cleanup
+- **Staleness Fading**: After 6 seconds without a `CURSOR_UPDATE`, remote cursor elements fade out (`opacity: 0`) with a smooth CSS ease transition. The collaborator remains active in the room presence list; presence and cursor activity are cleanly decoupled.
+- **Disconnect Cleanup**: When `USER_LEFT` is emitted, both the server and remaining clients immediately unmount and garbage-collect the departing user's cursor element and associated timers, preventing phantom/ghost cursors.
+- **Unmount Protection**: Room exit and page unmount tear down all active timers and detach DOM nodes.
+
+### 4.5 Presence Badge Polish
+- **Color-Coded Initials**: Collaborator avatar circles display the user's uppercase initials rendered against their server-assigned color.
+- **Self Indicator**: The local user's avatar displays a bold `(You)` tag and prominent outline.
+- **Live Status Pips**: Each avatar badge features a pulsing green online indicator confirming active WebSocket connectivity.
+
+---
+
+## 5. Drawing Operations Architecture (Section 4)
 
 Section 4 established the local drawing environment modeled around reversible operational deltas:
 
-### 4.1 Tools & Rendering
+### 5.1 Tools & Rendering
 - **Pen**: Solid-color stroke with quadratic Bézier smoothing and round caps/joins.
 - **Highlighter**: Semi-transparent stroke rendered with `ctx.globalAlpha = 0.35` and wide presets.
 - **Stroke-Level Eraser**: Mathematical point-to-segment Euclidean distance check removes intersected strokes cleanly without raster artifacts.
 
-### 4.2 Reversible Operation Stack (Undo / Redo)
+### 5.2 Reversible Operation Stack (Undo / Redo)
 ```typescript
 type CanvasOperation =
   | { type: 'add-stroke'; stroke: Stroke }
@@ -191,7 +225,7 @@ type CanvasOperation =
 
 ---
 
-## 5. Canvas Rendering Architecture (Section 3)
+## 6. Canvas Rendering Architecture (Section 3)
 
 - Native HTML5 Canvas 2D context.
 - High-DPI / Retina resolution scaling (`canvas.width = rect.width * dpr`, `ctx.scale(dpr, dpr)`).
@@ -200,7 +234,7 @@ type CanvasOperation =
 
 ---
 
-## 6. Directory Structure
+## 7. Directory Structure
 
 ```text
 mindforge/ (SyncDraw Workspace Root)
