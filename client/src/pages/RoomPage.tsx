@@ -18,6 +18,7 @@ import {
   createCollaborationClient,
   type CollaborationClient,
   PendingOperationQueue,
+  readAllPendingRecordsFromStorage,
 } from '../collaboration';
 import type { UserSession } from '../types';
 import type { Stroke, CanvasSettings, CanvasOperation } from '../canvas';
@@ -41,12 +42,54 @@ export const RoomPage: React.FC = () => {
   const [directJoinName, setDirectJoinName] = useState<string>('');
   const [joinError, setJoinError] = useState<string | null>(null);
 
-  // Drawing state: Canonical collection of finalized strokes
-  const [strokes, setStrokes] = useState<Stroke[]>([]);
+  const displayName = session?.displayName || '';
+  const hasSession = Boolean(session && session.displayName);
 
-  // Collaborative Operation History Log
-  const [operations, setOperations] = useState<OperationRecord[]>([]);
-  const appliedOperationIds = useRef<Set<string>>(new Set());
+  // Initialize initial pending state directly from storage without accessing refs in render
+  const [pendingCount, setPendingCount] = useState<number>(() => {
+    if (!roomId || !displayName) return 0;
+    const records = readAllPendingRecordsFromStorage().filter(
+      (r) => r.roomId === roomId && r.userSessionId === displayName
+    );
+    return records.length;
+  });
+
+  // Collaborative Operation History Log: hydrated from persisted pending queue if any
+  const [operations, setOperations] = useState<OperationRecord[]>(() => {
+    if (!roomId || !displayName) return [];
+    const records = readAllPendingRecordsFromStorage().filter(
+      (r) => r.roomId === roomId && r.userSessionId === displayName
+    );
+    return records.map((r) => ({ operation: r.operation, active: true }));
+  });
+
+  // Drawing state: Canonical collection of finalized strokes
+  const [strokes, setStrokes] = useState<Stroke[]>(() => {
+    if (!roomId || !displayName) return [];
+    const records = readAllPendingRecordsFromStorage().filter(
+      (r) => r.roomId === roomId && r.userSessionId === displayName
+    );
+    const initialRecords = records.map((r) => ({ operation: r.operation, active: true }));
+    return reconstructCanvasState(initialRecords);
+  });
+
+  const appliedOperationIds = useRef<Set<string>>(
+    new Set(
+      roomId && displayName
+        ? readAllPendingRecordsFromStorage()
+            .filter((r) => r.roomId === roomId && r.userSessionId === displayName)
+            .map((r) => r.operation.operationId)
+        : []
+    )
+  );
+
+  // Durable Client-Side Pending Operation Queue (accessed only in effects/callbacks)
+  const queueRef = useRef<PendingOperationQueue | null>(null);
+  useEffect(() => {
+    if (isRoomValid && roomId && displayName) {
+      queueRef.current = new PendingOperationQueue(roomId, displayName);
+    }
+  }, [isRoomValid, roomId, displayName]);
 
   // Clear confirmation modal state
   const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
@@ -62,35 +105,6 @@ export const RoomPage: React.FC = () => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | undefined>(undefined);
-
-  // Durable Client-Side Pending Operation Queue
-  const queueRef = useRef<PendingOperationQueue | null>(null);
-  const [pendingCount, setPendingCount] = useState<number>(0);
-
-  const displayName = session?.displayName || '';
-  const hasSession = Boolean(session && session.displayName);
-
-  // Initialize queue and safely recover any persisted offline operations on load/refresh
-  useEffect(() => {
-    if (isRoomValid && roomId && displayName) {
-      const q = new PendingOperationQueue(roomId, displayName);
-      queueRef.current = q;
-      const initialPending = q.getPendingOperations();
-      setPendingCount(initialPending.length);
-
-      if (initialPending.length > 0) {
-        const initialRecords: OperationRecord[] = initialPending.map((op) => ({
-          operation: op,
-          active: true,
-        }));
-        for (const op of initialPending) {
-          appliedOperationIds.current.add(op.operationId);
-        }
-        setOperations(initialRecords);
-        setStrokes(reconstructCanvasState(initialRecords));
-      }
-    }
-  }, [isRoomValid, roomId, displayName]);
 
   // Author-scoped undo/redo eligibility for the local participant (works both online and offline)
   const effectiveAuthorId = currentUserId || displayName;
