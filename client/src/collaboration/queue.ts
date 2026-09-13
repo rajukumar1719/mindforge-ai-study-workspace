@@ -148,10 +148,22 @@ export class PendingOperationQueue {
   private roomId: string;
   private userSessionId: string;
 
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private handleBeforeUnload = (): void => {
+    if (this.persistTimer !== null) {
+      this.persistImmediate();
+    }
+  };
+
   constructor(roomId: string, userSessionId: string) {
     this.roomId = roomId;
     this.userSessionId = userSessionId;
     this.loadFromStorage();
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', this.handleBeforeUnload);
+    }
   }
 
   public getRoomId(): string {
@@ -173,14 +185,31 @@ export class PendingOperationQueue {
   }
 
   /**
-   * Persists current in-memory queue to localStorage.
+   * Persists current in-memory queue to localStorage immediately.
    */
-  private persist(): void {
+  public persistImmediate(): void {
+    if (this.persistTimer !== null) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
     writePendingRecordsToStorage(this.roomId, this.userSessionId, this.records);
   }
 
   /**
-   * Enqueues an operation locally.
+   * Debounces localStorage persistence during bursts of rapid acknowledgments or status updates.
+   */
+  private schedulePersist(debounceMs = 50): void {
+    if (this.persistTimer !== null) {
+      clearTimeout(this.persistTimer);
+    }
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      writePendingRecordsToStorage(this.roomId, this.userSessionId, this.records);
+    }, debounceMs);
+  }
+
+  /**
+   * Enqueues an operation locally with immediate durable persistence.
    */
   public enqueue(op: CollaborativeOperation): void {
     // Avoid duplicate enqueuing of the same operationId
@@ -199,31 +228,31 @@ export class PendingOperationQueue {
     };
 
     this.records.push(record);
-    this.persist();
+    this.persistImmediate();
   }
 
   /**
-   * Marks an operation as in-flight / sent to socket.
+   * Marks an operation as in-flight / sent to socket (debounced write).
    */
   public markSent(operationId: string): void {
     const record = this.records.find((r) => r.operation.operationId === operationId);
     if (record) {
       record.status = 'sent';
       record.retryCount += 1;
-      this.persist();
+      this.schedulePersist();
     }
   }
 
   /**
    * Acknowledges an operation as accepted by the server.
-   * Removes from pending queue and storage.
+   * Removes from pending queue and schedules debounced storage sync.
    */
   public acknowledge(operationId: string): boolean {
     const initialLength = this.records.length;
     this.records = this.records.filter((r) => r.operation.operationId !== operationId);
     const removed = this.records.length !== initialLength;
     if (removed) {
-      this.persist();
+      this.schedulePersist();
     }
     return removed;
   }
@@ -257,7 +286,7 @@ export class PendingOperationQueue {
     }
 
     this.records = remaining;
-    this.persist();
+    this.persistImmediate();
     return opsToReplay;
   }
 
@@ -280,6 +309,16 @@ export class PendingOperationQueue {
    */
   public clear(): void {
     this.records = [];
-    this.persist();
+    this.persistImmediate();
+  }
+
+  /**
+   * Flushes any pending debounced writes and removes window listeners.
+   */
+  public destroy(): void {
+    this.persistImmediate();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('beforeunload', this.handleBeforeUnload);
+    }
   }
 }

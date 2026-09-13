@@ -34,6 +34,10 @@ export const CursorOverlay = forwardRef<CursorOverlayRef, CursorOverlayProps>(({
   const cursorsMap = useRef<Map<string, CursorNode>>(new Map());
   const collaboratorsRef = useRef<Collaborator[]>(collaborators);
 
+  // High-frequency cursor position coalescing via requestAnimationFrame
+  const pendingCursorPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const cursorRafIdRef = useRef<number | null>(null);
+
   // Keep collaborators ref in sync with prop updates
   useEffect(() => {
     collaboratorsRef.current = collaborators;
@@ -45,18 +49,18 @@ export const CursorOverlay = forwardRef<CursorOverlayRef, CursorOverlayProps>(({
         window.clearTimeout(cursorNode.timeoutId);
         cursorNode.el.remove();
         cursorsMap.current.delete(userId);
+        pendingCursorPositionsRef.current.delete(userId);
       }
     }
   }, [collaborators]);
 
-  useImperativeHandle(ref, () => ({
-    updateRemoteCursor: (userId: string, x: number, y: number) => {
-      // Do not render local user's own cursor
-      if (userId === currentUserId) return;
+  // Flush batched cursor positions in a single animation frame pass
+  const flushCursorPositions = () => {
+    cursorRafIdRef.current = null;
+    const container = containerRef.current;
+    if (!container) return;
 
-      const container = containerRef.current;
-      if (!container) return;
-
+    for (const [userId, pos] of pendingCursorPositionsRef.current.entries()) {
       let cursorNode = cursorsMap.current.get(userId);
 
       if (!cursorNode) {
@@ -66,7 +70,7 @@ export const CursorOverlay = forwardRef<CursorOverlayRef, CursorOverlayProps>(({
 
         const el = document.createElement('div');
         el.className = 'absolute top-0 left-0 pointer-events-none will-change-transform';
-        el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        el.style.transform = `translate3d(${pos.x}px, ${pos.y}px, 0)`;
         el.style.transition = 'transform 60ms linear, opacity 180ms ease-out';
         el.style.opacity = '1';
         el.style.zIndex = '30';
@@ -94,7 +98,7 @@ export const CursorOverlay = forwardRef<CursorOverlayRef, CursorOverlayProps>(({
         cursorsMap.current.set(userId, cursorNode);
       } else {
         // Move existing cursor smoothly
-        cursorNode.el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        cursorNode.el.style.transform = `translate3d(${pos.x}px, ${pos.y}px, 0)`;
         cursorNode.el.style.opacity = '1';
 
         // Reset staleness countdown
@@ -105,9 +109,24 @@ export const CursorOverlay = forwardRef<CursorOverlayRef, CursorOverlayProps>(({
           }
         }, 6000);
       }
+    }
+    pendingCursorPositionsRef.current.clear();
+  };
+
+  useImperativeHandle(ref, () => ({
+    updateRemoteCursor: (userId: string, x: number, y: number) => {
+      // Do not render local user's own cursor
+      if (userId === currentUserId) return;
+
+      pendingCursorPositionsRef.current.set(userId, { x, y });
+
+      if (cursorRafIdRef.current === null) {
+        cursorRafIdRef.current = requestAnimationFrame(flushCursorPositions);
+      }
     },
 
     removeRemoteCursor: (userId: string) => {
+      pendingCursorPositionsRef.current.delete(userId);
       const cursorNode = cursorsMap.current.get(userId);
       if (cursorNode) {
         window.clearTimeout(cursorNode.timeoutId);
@@ -117,6 +136,7 @@ export const CursorOverlay = forwardRef<CursorOverlayRef, CursorOverlayProps>(({
     },
 
     clearAll: () => {
+      pendingCursorPositionsRef.current.clear();
       for (const [, cursorNode] of cursorsMap.current.entries()) {
         window.clearTimeout(cursorNode.timeoutId);
         cursorNode.el.remove();
@@ -125,15 +145,21 @@ export const CursorOverlay = forwardRef<CursorOverlayRef, CursorOverlayProps>(({
     },
   }), [currentUserId]);
 
-  // Clean up all timers and DOM elements on unmount
+  // Clean up all timers, animation frames, and DOM elements on unmount
   useEffect(() => {
     const map = cursorsMap.current;
+    const pending = pendingCursorPositionsRef.current;
     return () => {
+      if (cursorRafIdRef.current !== null) {
+        cancelAnimationFrame(cursorRafIdRef.current);
+        cursorRafIdRef.current = null;
+      }
       for (const [, cursorNode] of map.entries()) {
         window.clearTimeout(cursorNode.timeoutId);
         cursorNode.el.remove();
       }
       map.clear();
+      pending.clear();
     };
   }, []);
 

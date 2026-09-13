@@ -34,6 +34,7 @@ export interface Room {
   activeStrokes: Map<string, Stroke>; // In-flight strokes keyed by strokeId
   operations: OperationRecord[];
   appliedOperationIds: Set<string>;
+  operationMap: Map<string, OperationRecord>; // O(1) indexed lookup by operationId
   createdAt: number;
 }
 

@@ -7,7 +7,7 @@ interface ClearConfirmDialogProps {
   onCancel: () => void;
 }
 
-export const ClearConfirmDialog: React.FC<ClearConfirmDialogProps> = ({
+export const ClearConfirmDialog: React.FC<ClearConfirmDialogProps> = React.memo(({
   isOpen,
   onConfirm,
   onCancel,
@@ -53,4 +53,7 @@ export const ClearConfirmDialog: React.FC<ClearConfirmDialogProps> = ({
       </div>
     </Modal>
   );
-};
+});
+
+ClearConfirmDialog.displayName = 'ClearConfirmDialog';
+

@@ -12,7 +12,7 @@ interface RoomHeaderProps {
   pendingCount?: number;
 }
 
-export const RoomHeader: React.FC<RoomHeaderProps> = ({
+export const RoomHeader: React.FC<RoomHeaderProps> = React.memo(({
   roomId,
   displayName,
   connectionStatus,
@@ -172,4 +172,7 @@ export const RoomHeader: React.FC<RoomHeaderProps> = ({
       </div>
     </header>
   );
-};
+});
+
+RoomHeader.displayName = 'RoomHeader';
+

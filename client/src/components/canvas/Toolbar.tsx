@@ -30,7 +30,7 @@ const BRUSH_SIZES = [
   { label: 'Heavy (24px)', value: 24, dotSize: 'w-5 h-5' },
 ];
 
-export const Toolbar: React.FC<ToolbarProps> = ({
+export const Toolbar: React.FC<ToolbarProps> = React.memo(({
   settings,
   onSettingsChange,
   canUndo,
@@ -249,4 +249,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       </div>
     </aside>
   );
-};
+});
+
+Toolbar.displayName = 'Toolbar';
+

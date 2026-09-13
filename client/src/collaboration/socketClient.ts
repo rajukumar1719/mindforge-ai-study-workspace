@@ -50,6 +50,7 @@ export interface CollaborationClient {
   sendCursorMove: (x: number, y: number) => void;
   sendOperation: (operation: CollaborativeOperation) => void;
   getConnectionState: () => ConnectionState;
+  getPingLatency: () => number | null;
 }
 
 /**
@@ -206,6 +207,31 @@ export function createCollaborationClient(
     }
   };
 
+  // Lightweight latency measurement using built-in Socket.IO heartbeats (zero extra network traffic)
+  let lastLatencyMs: number | null = null;
+  let pingSentTime = 0;
+
+  const bindEnginePing = () => {
+    try {
+      const engine = (socket.io as unknown as { engine?: { on: (event: string, fn: () => void) => void } }).engine;
+      if (engine) {
+        engine.on('ping', () => {
+          pingSentTime = Date.now();
+        });
+        engine.on('pong', () => {
+          if (pingSentTime > 0) {
+            lastLatencyMs = Math.max(1, Date.now() - pingSentTime);
+          }
+        });
+      }
+    } catch {
+      // Graceful fallback
+    }
+  };
+
+  bindEnginePing();
+  socket.io.on('open', bindEnginePing);
+
   // 1. Connection lifecycle handlers
   const handleConnect = () => {
     updateState('connected');
@@ -347,6 +373,7 @@ export function createCollaborationClient(
     sendCursorMove,
     sendOperation,
     getConnectionState: () => connectionState,
+    getPingLatency: () => lastLatencyMs,
     disconnect: () => {
       if (batchTimer !== null) {
         clearTimeout(batchTimer);

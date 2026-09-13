@@ -88,6 +88,19 @@ export function reconstructCanvasState(operations: OperationRecord[]): Stroke[] 
 }
 
 /**
+ * Creates an indexed Map of operation records keyed by operationId for O(1) lookups.
+ */
+export function createOperationIndex(
+  operations: OperationRecord[]
+): Map<string, OperationRecord> {
+  const map = new Map<string, OperationRecord>();
+  for (const record of operations) {
+    map.set(record.operation.operationId, record);
+  }
+  return map;
+}
+
+/**
  * Finds the latest undoable base operation authored by the specified user.
  * Scans backwards from the most recent operation.
  */
@@ -113,16 +126,21 @@ export function findLatestUndoableOperation(
 /**
  * Finds the latest redoable base operation authored by the specified user.
  * Scans backwards for the most recent undo operation by this user whose target is currently inactive.
+ * Accepts an optional pre-computed Map index for O(1) target lookups (avoiding nested O(N^2) searches).
  */
 export function findLatestRedoableOperation(
   operations: OperationRecord[],
-  userId: string
+  userId: string,
+  operationIndex?: Map<string, OperationRecord>
 ): CollaborativeOperation | null {
+  // If no pre-computed index provided, create one for O(1) target lookups
+  const index = operationIndex || createOperationIndex(operations);
+
   for (let i = operations.length - 1; i >= 0; i--) {
     const record = operations[i]!;
     if (record.operation.type === 'undo' && record.operation.userId === userId) {
       const targetId = record.operation.targetOperationId;
-      const targetRecord = operations.find((r) => r.operation.operationId === targetId);
+      const targetRecord = index.get(targetId);
       if (targetRecord && !targetRecord.active && targetRecord.operation.userId === userId) {
         return targetRecord.operation;
       }
@@ -130,3 +148,4 @@ export function findLatestRedoableOperation(
   }
   return null;
 }
+

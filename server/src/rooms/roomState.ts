@@ -11,6 +11,7 @@ export function createRoomState(roomId: string): Room {
     activeStrokes: new Map(),
     operations: [],
     appliedOperationIds: new Set(),
+    operationMap: new Map(),
     createdAt: Date.now(),
   };
 }

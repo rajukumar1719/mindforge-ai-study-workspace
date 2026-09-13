@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { RoomHeader } from '../components/RoomHeader';
 import { Canvas, type CanvasRef } from '../components/canvas/Canvas';
 import { CursorOverlay, type CursorOverlayRef } from '../components/collaboration/CursorOverlay';
 import { Toolbar } from '../components/canvas/Toolbar';
 import { ClearConfirmDialog } from '../components/canvas/ClearConfirmDialog';
+import { PerfOverlay } from '../components/debug/PerfOverlay';
 import { normalizeRoomId, isValidRoomId } from '../utils/roomId';
 import { getUserSession, setUserSession } from '../utils/storage';
 import {
@@ -21,7 +22,7 @@ import {
   readAllPendingRecordsFromStorage,
 } from '../collaboration';
 import type { UserSession } from '../types';
-import type { Stroke, CanvasSettings, CanvasOperation } from '../canvas';
+import type { Stroke, CanvasSettings, CanvasOperation, DrawingTool, Point } from '../canvas';
 import type {
   Collaborator,
   ConnectionStatus,
@@ -89,6 +90,10 @@ export const RoomPage: React.FC = () => {
     if (isRoomValid && roomId && displayName) {
       queueRef.current = new PendingOperationQueue(roomId, displayName);
     }
+    return () => {
+      queueRef.current?.destroy();
+      queueRef.current = null;
+    };
   }, [isRoomValid, roomId, displayName]);
 
   // Clear confirmation modal state
@@ -106,10 +111,16 @@ export const RoomPage: React.FC = () => {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | undefined>(undefined);
 
-  // Author-scoped undo/redo eligibility for the local participant (works both online and offline)
+  // Author-scoped undo/redo eligibility for the local participant (memoized to avoid scanning on unrelated renders)
   const effectiveAuthorId = currentUserId || displayName;
-  const canUndo = Boolean(findLatestUndoableOperation(operations, effectiveAuthorId));
-  const canRedo = Boolean(findLatestRedoableOperation(operations, effectiveAuthorId));
+  const canUndo = useMemo(
+    () => Boolean(findLatestUndoableOperation(operations, effectiveAuthorId)),
+    [operations, effectiveAuthorId]
+  );
+  const canRedo = useMemo(
+    () => Boolean(findLatestRedoableOperation(operations, effectiveAuthorId)),
+    [operations, effectiveAuthorId]
+  );
 
   // Establish real-time connection lifecycle strictly when user is in the room
   useEffect(() => {
@@ -423,6 +434,90 @@ export const RoomPage: React.FC = () => {
     };
   }, [handleUndo, handleRedo]);
 
+  // Stabilized callbacks for Canvas and Toolbar to prevent unnecessary re-renders
+  const handleRemoteStrokeComplete = useCallback((stroke: Stroke) => {
+    const opId = `op_${stroke.id}`;
+    if (!appliedOperationIds.current.has(opId)) {
+      appliedOperationIds.current.add(opId);
+      setOperations((prev) => {
+        if (prev.some((r) => r.operation.operationId === opId)) return prev;
+        return [
+          ...prev,
+          {
+            operation: {
+              operationId: opId,
+              type: 'add-stroke',
+              userId: stroke.userId,
+              stroke,
+              timestamp: stroke.createdAt || Date.now(),
+            },
+            active: true,
+          },
+        ];
+      });
+    }
+    setStrokes((prev) => {
+      if (prev.some((s) => s.id === stroke.id)) return prev;
+      return [...prev, stroke];
+    });
+  }, []);
+
+  const handleLocalDrawStart = useCallback((data: {
+    strokeId: string;
+    tool: DrawingTool;
+    color: string;
+    width: number;
+    point: Point;
+  }) => {
+    clientRef.current?.sendDrawStart(data);
+  }, []);
+
+  const handleLocalDrawMove = useCallback((strokeId: string, point: Point) => {
+    clientRef.current?.queueStrokePoint(strokeId, point);
+  }, []);
+
+  const handleLocalDrawEnd = useCallback((strokeId: string) => {
+    clientRef.current?.sendDrawEnd(strokeId);
+  }, []);
+
+  const handleLocalErase = useCallback(
+    (strokeIds: string[]) => {
+      if (strokeIds.length > 0) {
+        const operationId = `op_erase_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const colOp: CollaborativeOperation = {
+          operationId,
+          type: 'erase-strokes',
+          userId: currentUserId || displayName,
+          strokeIds,
+          timestamp: Date.now(),
+        };
+
+        dispatchLocalOperation(colOp);
+
+        if (clientRef.current?.getConnectionState() === 'connected') {
+          clientRef.current?.sendEraseStrokes({ operationId, strokeIds });
+        }
+      }
+    },
+    [currentUserId, displayName, dispatchLocalOperation]
+  );
+
+  const handleLocalCursorMove = useCallback((point: Point) => {
+    clientRef.current?.sendCursorMove(point.x, point.y);
+  }, []);
+
+  const handleOpenClearDialog = useCallback(() => {
+    setIsClearDialogOpen(true);
+  }, []);
+
+  const handleCancelClearDialog = useCallback(() => {
+    setIsClearDialogOpen(false);
+  }, []);
+
+  const getClientPingLatency = useCallback(() => {
+    return clientRef.current?.getPingLatency() ?? null;
+  }, []);
+
   const handleDirectJoinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = directJoinName.trim();
@@ -557,54 +652,12 @@ export const RoomPage: React.FC = () => {
           settings={settings}
           strokes={strokes}
           onOperation={handleOperation}
-          onRemoteStrokeComplete={(stroke) => {
-            const opId = `op_${stroke.id}`;
-            if (!appliedOperationIds.current.has(opId)) {
-              appliedOperationIds.current.add(opId);
-              setOperations((prev) => {
-                if (prev.some((r) => r.operation.operationId === opId)) return prev;
-                return [
-                  ...prev,
-                  {
-                    operation: {
-                      operationId: opId,
-                      type: 'add-stroke',
-                      userId: stroke.userId,
-                      stroke,
-                      timestamp: stroke.createdAt || Date.now(),
-                    },
-                    active: true,
-                  },
-                ];
-              });
-            }
-            setStrokes((prev) => {
-              if (prev.some((s) => s.id === stroke.id)) return prev;
-              return [...prev, stroke];
-            });
-          }}
-          onLocalDrawStart={(data) => clientRef.current?.sendDrawStart(data)}
-          onLocalDrawMove={(strokeId, point) => clientRef.current?.queueStrokePoint(strokeId, point)}
-          onLocalDrawEnd={(strokeId) => clientRef.current?.sendDrawEnd(strokeId)}
-          onLocalErase={(strokeIds) => {
-            if (strokeIds.length > 0) {
-              const operationId = `op_erase_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-              const colOp: CollaborativeOperation = {
-                operationId,
-                type: 'erase-strokes',
-                userId: currentUserId || displayName,
-                strokeIds,
-                timestamp: Date.now(),
-              };
-
-              dispatchLocalOperation(colOp);
-
-              if (clientRef.current?.getConnectionState() === 'connected') {
-                clientRef.current?.sendEraseStrokes({ operationId, strokeIds });
-              }
-            }
-          }}
-          onLocalCursorMove={(point) => clientRef.current?.sendCursorMove(point.x, point.y)}
+          onRemoteStrokeComplete={handleRemoteStrokeComplete}
+          onLocalDrawStart={handleLocalDrawStart}
+          onLocalDrawMove={handleLocalDrawMove}
+          onLocalDrawEnd={handleLocalDrawEnd}
+          onLocalErase={handleLocalErase}
+          onLocalCursorMove={handleLocalCursorMove}
         />
 
         {/* Live Collaborative Cursor Overlay Layer */}
@@ -622,7 +675,7 @@ export const RoomPage: React.FC = () => {
           canRedo={canRedo}
           onUndo={handleUndo}
           onRedo={handleRedo}
-          onClearClick={() => setIsClearDialogOpen(true)}
+          onClearClick={handleOpenClearDialog}
           onExportClick={handleExportPng}
         />
 
@@ -630,9 +683,19 @@ export const RoomPage: React.FC = () => {
         <ClearConfirmDialog
           isOpen={isClearDialogOpen}
           onConfirm={handleConfirmClear}
-          onCancel={() => setIsClearDialogOpen(false)}
+          onCancel={handleCancelClearDialog}
+        />
+
+        {/* Development-Only Performance Diagnostics HUD */}
+        <PerfOverlay
+          activeCollaboratorsCount={collaborators.length}
+          operationsCount={operations.length}
+          pendingQueueCount={pendingCount}
+          connectionStatus={connectionStatus}
+          getPingLatency={getClientPingLatency}
         />
       </main>
     </div>
   );
 };
+

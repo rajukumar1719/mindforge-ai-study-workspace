@@ -16,7 +16,7 @@ import type {
 import {
   setupCanvasResolution,
   createStroke,
-  appendPointToStroke,
+  appendPointInPlace,
   renderStroke,
   renderAllStrokes,
   renderIncrementalSegment,
@@ -81,6 +81,10 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
   // Tracks strokes deleted in the current continuous eraser drag
   const erasedInGestureRef = useRef<{ stroke: Stroke; index: number }[]>([]);
 
+  // High-frequency remote update coalescing via requestAnimationFrame
+  const remotePendingStrokesRef = useRef<Set<string>>(new Set());
+  const remoteRafIdRef = useRef<number | null>(null);
+
   const [isDrawing, setIsDrawing] = useState(false);
 
   // Synchronize ref mirrors with props
@@ -91,6 +95,39 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  // Clean up pending animation frames on unmount
+  useEffect(() => {
+    return () => {
+      if (remoteRafIdRef.current !== null) {
+        cancelAnimationFrame(remoteRafIdRef.current);
+        remoteRafIdRef.current = null;
+      }
+    };
+  }, []);
+
+  // Flush queued remote incremental strokes in a single requestAnimationFrame pass
+  const flushRemoteDrawing = useCallback(() => {
+    remoteRafIdRef.current = null;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    for (const strokeId of remotePendingStrokesRef.current) {
+      const stroke = remoteActiveStrokesRef.current.get(strokeId);
+      if (stroke) {
+        renderIncrementalSegment(
+          ctx,
+          stroke.points,
+          stroke.color,
+          stroke.width,
+          stroke.tool
+        );
+      }
+    }
+    remotePendingStrokesRef.current.clear();
+  }, []);
 
   // Redraw the entire canvas from canonical strokes + active in-flight strokes
   const redraw = useCallback(() => {
@@ -164,25 +201,36 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
       const remoteStroke = remoteActiveStrokesRef.current.get(data.strokeId);
       if (!remoteStroke) return; // Gracefully drop if DRAW_START arrived late or missing
 
-      const ctx = canvasRef.current?.getContext('2d');
       for (const pt of data.points) {
         remoteStroke.points.push(pt);
       }
 
-      if (ctx) {
-        renderIncrementalSegment(
-          ctx,
-          remoteStroke.points,
-          remoteStroke.color,
-          remoteStroke.width,
-          remoteStroke.tool
-        );
+      remotePendingStrokesRef.current.add(data.strokeId);
+
+      // Coalesce incoming remote points across all active remote strokes into one rAF paint pass
+      if (remoteRafIdRef.current === null) {
+        remoteRafIdRef.current = requestAnimationFrame(flushRemoteDrawing);
       }
     },
 
     handleRemoteDrawEnd: (data: DrawEndData) => {
       const remoteStroke = remoteActiveStrokesRef.current.get(data.strokeId);
       if (!remoteStroke) return;
+
+      // Flush any pending incremental segments for this stroke before finalizing
+      if (remotePendingStrokesRef.current.has(data.strokeId)) {
+        const ctx = canvasRef.current?.getContext('2d');
+        if (ctx) {
+          renderIncrementalSegment(
+            ctx,
+            remoteStroke.points,
+            remoteStroke.color,
+            remoteStroke.width,
+            remoteStroke.tool
+          );
+        }
+        remotePendingStrokesRef.current.delete(data.strokeId);
+      }
 
       remoteActiveStrokesRef.current.delete(data.strokeId);
 
@@ -197,6 +245,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
       let cleaned = false;
       for (const [strokeId, stroke] of remoteActiveStrokesRef.current.entries()) {
         if (stroke.userId === abandonedUserId) {
+          remotePendingStrokesRef.current.delete(strokeId);
           remoteActiveStrokesRef.current.delete(strokeId);
           cleaned = true;
         }
@@ -205,7 +254,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
         redraw();
       }
     },
-  }), [redraw, onRemoteStrokeComplete]);
+  }), [redraw, onRemoteStrokeComplete, flushRemoteDrawing]);
 
   // ResizeObserver setup for high-DPI scaling and resize resilience
   useEffect(() => {
@@ -332,22 +381,22 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
 
         if (!activeStrokeRef.current) return;
 
-        const updated = appendPointToStroke(activeStrokeRef.current, point);
-        activeStrokeRef.current = updated;
+        const active = activeStrokeRef.current;
+        appendPointInPlace(active, point);
 
         const ctx = canvas.getContext('2d');
         if (ctx) {
           renderIncrementalSegment(
             ctx,
-            updated.points,
-            updated.color,
-            updated.width,
-            updated.tool
+            active.points,
+            active.color,
+            active.width,
+            active.tool
           );
         }
 
         // Queue point for batched network dispatch
-        onLocalDrawMove?.(updated.id, point);
+        onLocalDrawMove?.(active.id, point);
       },
 
       onStrokeEnd: () => {

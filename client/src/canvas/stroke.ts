@@ -40,3 +40,13 @@ export function appendPointToStroke(stroke: Stroke, point: Point): Stroke {
     points: [...stroke.points, point],
   };
 }
+
+/**
+ * Appends a point to an existing stroke in-place to avoid array spreading overhead during active drawing.
+ * Returns the same stroke instance for convenience.
+ */
+export function appendPointInPlace(stroke: Stroke, point: Point): Stroke {
+  stroke.points.push(point);
+  return stroke;
+}
+

@@ -142,7 +142,7 @@ export class RoomManager {
     const opId = `op_${stroke.id}`;
     if (!room.appliedOperationIds.has(opId)) {
       room.appliedOperationIds.add(opId);
-      room.operations.push({
+      const record: OperationRecord = {
         operation: {
           operationId: opId,
           type: 'add-stroke',
@@ -151,7 +151,9 @@ export class RoomManager {
           timestamp: stroke.createdAt || Date.now(),
         },
         active: true,
-      });
+      };
+      room.operations.push(record);
+      room.operationMap.set(opId, record);
     }
 
     return stroke;
@@ -185,7 +187,7 @@ export class RoomManager {
     // Record erase operation if provided and not already recorded
     if (operationId && !room.appliedOperationIds.has(operationId)) {
       room.appliedOperationIds.add(operationId);
-      room.operations.push({
+      const record: OperationRecord = {
         operation: {
           operationId,
           type: 'erase-strokes',
@@ -194,7 +196,9 @@ export class RoomManager {
           timestamp: Date.now(),
         },
         active: true,
-      });
+      };
+      room.operations.push(record);
+      room.operationMap.set(operationId, record);
     }
 
     return erasedIds;
@@ -221,9 +225,9 @@ export class RoomManager {
   ): { success: boolean; duplicate?: boolean; record?: OperationRecord; error?: { code: string; message: string } } {
     const room = this.getOrCreateRoom(roomId);
 
-    // Idempotent duplicate check: return duplicate flag and existing record
+    // Idempotent duplicate check: return duplicate flag and existing record via O(1) Map lookup
     if (room.appliedOperationIds.has(op.operationId)) {
-      const existingRecord = room.operations.find((r) => r.operation.operationId === op.operationId);
+      const existingRecord = room.operationMap.get(op.operationId) || room.operations.find((r) => r.operation.operationId === op.operationId);
       return {
         success: false,
         duplicate: true,
@@ -233,7 +237,7 @@ export class RoomManager {
     }
 
     if (op.type === 'undo') {
-      const targetRecord = room.operations.find((r) => r.operation.operationId === op.targetOperationId);
+      const targetRecord = room.operationMap.get(op.targetOperationId) || room.operations.find((r) => r.operation.operationId === op.targetOperationId);
       if (!targetRecord) {
         return {
           success: false,
@@ -262,6 +266,7 @@ export class RoomManager {
       // Commit undo operation record
       const record: OperationRecord = { operation: op, active: true };
       room.operations.push(record);
+      room.operationMap.set(op.operationId, record);
       room.appliedOperationIds.add(op.operationId);
 
       // Deterministically rebuild canonical room strokes
@@ -270,7 +275,7 @@ export class RoomManager {
     }
 
     if (op.type === 'redo') {
-      const targetRecord = room.operations.find((r) => r.operation.operationId === op.targetOperationId);
+      const targetRecord = room.operationMap.get(op.targetOperationId) || room.operations.find((r) => r.operation.operationId === op.targetOperationId);
       if (!targetRecord) {
         return {
           success: false,
@@ -299,6 +304,7 @@ export class RoomManager {
       // Commit redo operation record
       const record: OperationRecord = { operation: op, active: true };
       room.operations.push(record);
+      room.operationMap.set(op.operationId, record);
       room.appliedOperationIds.add(op.operationId);
 
       // Deterministically rebuild canonical room strokes
@@ -309,6 +315,7 @@ export class RoomManager {
     if (op.type === 'add-stroke') {
       const record: OperationRecord = { operation: op, active: true };
       room.operations.push(record);
+      room.operationMap.set(op.operationId, record);
       room.appliedOperationIds.add(op.operationId);
 
       // Add to room.strokes if not present
@@ -321,6 +328,7 @@ export class RoomManager {
     if (op.type === 'erase-strokes') {
       const record: OperationRecord = { operation: op, active: true };
       room.operations.push(record);
+      room.operationMap.set(op.operationId, record);
       room.appliedOperationIds.add(op.operationId);
 
       const idSet = new Set(op.strokeIds);
@@ -334,6 +342,7 @@ export class RoomManager {
     if (op.type === 'clear-canvas') {
       const record: OperationRecord = { operation: op, active: true };
       room.operations.push(record);
+      room.operationMap.set(op.operationId, record);
       room.appliedOperationIds.add(op.operationId);
 
       room.strokes = [];
