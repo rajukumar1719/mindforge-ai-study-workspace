@@ -15,6 +15,8 @@ import type {
   EraseStrokesData,
   SyncStateData,
   CursorUpdateData,
+  CollaborativeOperation,
+  OperationAppliedData,
 } from './types';
 import type { Point } from '../canvas';
 
@@ -33,6 +35,7 @@ export interface CollaborationClientOptions {
   onDrawEnd?: (data: DrawEndData) => void;
   onEraseStrokes?: (data: EraseStrokesData) => void;
   onCursorUpdate?: (data: CursorUpdateData) => void;
+  onOperationApplied?: (data: OperationAppliedData) => void;
 }
 
 export interface CollaborationClient {
@@ -43,6 +46,7 @@ export interface CollaborationClient {
   sendDrawEnd: (strokeId: string) => void;
   sendEraseStrokes: (payload: EraseStrokesPayload) => void;
   sendCursorMove: (x: number, y: number) => void;
+  sendOperation: (operation: CollaborativeOperation) => void;
 }
 
 /**
