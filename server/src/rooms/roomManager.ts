@@ -112,7 +112,6 @@ export class RoomManager {
     if (!room) return [];
 
     const idSet = new Set(strokeIds);
-    const beforeCount = room.strokes.length;
     const erasedIds: string[] = [];
 
     room.strokes = room.strokes.filter((s) => {
