@@ -174,12 +174,12 @@ When a new collaborator joins a room that already contains drawings:
 
 Section 4 established the local drawing environment modeled around reversible operational deltas:
 
-### 3.1 Tools & Rendering
+### 4.1 Tools & Rendering
 - **Pen**: Solid-color stroke with quadratic Bézier smoothing and round caps/joins.
 - **Highlighter**: Semi-transparent stroke rendered with `ctx.globalAlpha = 0.35` and wide presets.
 - **Stroke-Level Eraser**: Mathematical point-to-segment Euclidean distance check removes intersected strokes cleanly without raster artifacts.
 
-### 3.2 Reversible Operation Stack (Undo / Redo)
+### 4.2 Reversible Operation Stack (Undo / Redo)
 ```typescript
 type CanvasOperation =
   | { type: 'add-stroke'; stroke: Stroke }
@@ -191,7 +191,7 @@ type CanvasOperation =
 
 ---
 
-## 4. Canvas Rendering Architecture (Section 3)
+## 5. Canvas Rendering Architecture (Section 3)
 
 - Native HTML5 Canvas 2D context.
 - High-DPI / Retina resolution scaling (`canvas.width = rect.width * dpr`, `ctx.scale(dpr, dpr)`).
@@ -200,7 +200,7 @@ type CanvasOperation =
 
 ---
 
-## 5. Directory Structure
+## 6. Directory Structure
 
 ```text
 mindforge/ (SyncDraw Workspace Root)
