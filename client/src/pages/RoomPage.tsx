@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { RoomHeader } from '../components/RoomHeader';
 import { Canvas, type CanvasRef } from '../components/canvas/Canvas';
+import { CursorOverlay, type CursorOverlayRef } from '../components/collaboration/CursorOverlay';
 import { Toolbar } from '../components/canvas/Toolbar';
 import { ClearConfirmDialog } from '../components/canvas/ClearConfirmDialog';
 import { normalizeRoomId, isValidRoomId } from '../utils/roomId';
@@ -23,6 +24,7 @@ export const RoomPage: React.FC = () => {
   const isRoomValid = isValidRoomId(roomId);
 
   const canvasRef = useRef<CanvasRef>(null);
+  const cursorOverlayRef = useRef<CursorOverlayRef>(null);
   const clientRef = useRef<CollaborationClient | null>(null);
 
   const [session, setSession] = useState<UserSession | null>(() => getUserSession());
@@ -78,6 +80,10 @@ export const RoomPage: React.FC = () => {
         setCollaborators((prev) => prev.filter((c) => c.id !== data.userId));
         // Discard any active strokes for the disconnected user to prevent ghost strokes
         canvasRef.current?.cleanRemoteStrokesForUser(data.userId);
+        cursorOverlayRef.current?.removeRemoteCursor(data.userId);
+      },
+      onCursorUpdate: (data) => {
+        cursorOverlayRef.current?.updateRemoteCursor(data.userId, data.x, data.y);
       },
       onSyncState: (data) => {
         // Hydrate canvas with room's authoritative finalized strokes
@@ -105,6 +111,7 @@ export const RoomPage: React.FC = () => {
 
     return () => {
       clientRef.current = null;
+      cursorOverlayRef.current?.clearAll();
       client.disconnect();
     };
   }, [hasSession, isRoomValid, roomId, displayName]);
@@ -368,6 +375,14 @@ export const RoomPage: React.FC = () => {
               clientRef.current?.sendEraseStrokes({ operationId, strokeIds });
             }
           }}
+          onLocalCursorMove={(point) => clientRef.current?.sendCursorMove(point.x, point.y)}
+        />
+
+        {/* Live Collaborative Cursor Overlay Layer */}
+        <CursorOverlay
+          ref={cursorOverlayRef}
+          collaborators={collaborators}
+          currentUserId={currentUserId}
         />
 
         {/* Floating Toolbar with Full Toolset */}

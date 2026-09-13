@@ -53,6 +53,7 @@ interface CanvasProps {
   onLocalDrawMove?: (strokeId: string, point: Point) => void;
   onLocalDrawEnd?: (strokeId: string) => void;
   onLocalErase?: (strokeIds: string[]) => void;
+  onLocalCursorMove?: (point: Point) => void;
 }
 
 export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
@@ -65,6 +66,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
   onLocalDrawMove,
   onLocalDrawEnd,
   onLocalErase,
+  onLocalCursorMove,
 }, forwardedRef) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -272,6 +274,10 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
     const detach = attachPointerController(canvas, {
       getDimensions: () => dimensionsRef.current,
 
+      onCursorMove: (point: Point) => {
+        onLocalCursorMove?.(point);
+      },
+
       onStrokeStart: (point: Point) => {
         setIsDrawing(true);
         const currentSettings = settingsRef.current;
@@ -389,6 +395,7 @@ export const Canvas = forwardRef<CanvasRef, CanvasProps>(({
     onLocalDrawMove,
     onLocalDrawEnd,
     onLocalErase,
+    onLocalCursorMove,
   ]);
 
   const isEmpty = strokes.length === 0 && !isDrawing;
