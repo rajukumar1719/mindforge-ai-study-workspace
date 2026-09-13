@@ -70,12 +70,25 @@ export interface SyncStateData {
   strokes: Stroke[];
 }
 
+export interface CursorMovePayload {
+  x: number;
+  y: number;
+}
+
+export interface CursorUpdateData {
+  userId: string;
+  x: number;
+  y: number;
+  timestamp?: number;
+}
+
 export interface ClientToServerEvents {
   JOIN_ROOM: (payload: { roomId: string; displayName: string }) => void;
   DRAW_START: (payload: DrawStartPayload) => void;
   DRAW_UPDATE: (payload: DrawUpdatePayload) => void;
   DRAW_END: (payload: DrawEndPayload) => void;
   ERASE_STROKES: (payload: EraseStrokesPayload) => void;
+  CURSOR_MOVE: (payload: CursorMovePayload) => void;
 }
 
 export interface ServerToClientEvents {
@@ -88,4 +101,5 @@ export interface ServerToClientEvents {
   DRAW_UPDATE: (data: DrawUpdateData) => void;
   DRAW_END: (data: DrawEndData) => void;
   ERASE_STROKES: (data: EraseStrokesData) => void;
+  CURSOR_UPDATE: (data: CursorUpdateData) => void;
 }
