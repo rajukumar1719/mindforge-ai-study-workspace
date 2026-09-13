@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { RoomHeader } from '../components/RoomHeader';
-import { Canvas } from '../components/canvas/Canvas';
+import { Canvas, type CanvasRef } from '../components/canvas/Canvas';
 import { Toolbar } from '../components/canvas/Toolbar';
 import { ClearConfirmDialog } from '../components/canvas/ClearConfirmDialog';
 import { normalizeRoomId, isValidRoomId } from '../utils/roomId';
@@ -12,7 +12,7 @@ import {
   exportCanvasToPng,
   TOOL_DEFAULT_WIDTHS,
 } from '../canvas';
-import { createCollaborationClient } from '../collaboration';
+import { createCollaborationClient, type CollaborationClient } from '../collaboration';
 import type { UserSession } from '../types';
 import type { Stroke, CanvasSettings, CanvasOperation } from '../canvas';
 import type { Collaborator, ConnectionStatus } from '../collaboration';
@@ -22,7 +22,8 @@ export const RoomPage: React.FC = () => {
   const roomId = rawRoomId ? normalizeRoomId(rawRoomId) : '';
   const isRoomValid = isValidRoomId(roomId);
 
-  const canvasElementRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<CanvasRef>(null);
+  const clientRef = useRef<CollaborationClient | null>(null);
 
   const [session, setSession] = useState<UserSession | null>(() => getUserSession());
   const [directJoinName, setDirectJoinName] = useState<string>('');
@@ -75,13 +76,35 @@ export const RoomPage: React.FC = () => {
       },
       onUserLeft: (data) => {
         setCollaborators((prev) => prev.filter((c) => c.id !== data.userId));
+        // Discard any active strokes for the disconnected user to prevent ghost strokes
+        canvasRef.current?.cleanRemoteStrokesForUser(data.userId);
+      },
+      onSyncState: (data) => {
+        // Hydrate canvas with room's authoritative finalized strokes
+        setStrokes(data.strokes);
+      },
+      onDrawStart: (data) => {
+        canvasRef.current?.handleRemoteDrawStart(data);
+      },
+      onDrawUpdate: (data) => {
+        canvasRef.current?.handleRemoteDrawUpdate(data);
+      },
+      onDrawEnd: (data) => {
+        canvasRef.current?.handleRemoteDrawEnd(data);
+      },
+      onEraseStrokes: (data) => {
+        const idSet = new Set(data.strokeIds);
+        setStrokes((prev) => prev.filter((s) => !idSet.has(s.id)));
       },
       onError: (err) => {
         console.error('[Room Collaboration Error]:', err.code, err.message);
       },
     });
 
+    clientRef.current = client;
+
     return () => {
+      clientRef.current = null;
       client.disconnect();
     };
   }, [hasSession, isRoomValid, roomId, displayName]);
@@ -125,9 +148,10 @@ export const RoomPage: React.FC = () => {
 
   // Export PNG
   const handleExportPng = async () => {
-    if (!canvasElementRef.current) return;
+    const canvasEl = canvasRef.current?.getCanvasElement();
+    if (!canvasEl) return;
     const filename = `syncdraw-${roomId || 'canvas'}.png`;
-    const success = await exportCanvasToPng(canvasElementRef.current, filename);
+    const success = await exportCanvasToPng(canvasEl, filename);
     if (!success) {
       alert('Unable to export the canvas. Please try again.');
     }
