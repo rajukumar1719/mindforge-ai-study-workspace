@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test:drawing": "node test-drawing-sync.mjs",
-    "test:cursor": "node test-cursor-sync.mjs"
+    "test:cursor": "node test-cursor-sync.mjs",
+    "test:history": "node test-collaborative-history.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
