@@ -452,7 +452,41 @@ type CanvasOperation =
 
 ---
 
-## 10. Directory Structure
+## 10. Security & Hardening Architecture (Section 11)
+
+Section 11 hardens SyncDraw against realistic web application and WebSocket abuse:
+
+### 10.1 Input Validation & Sanitization
+- **Room IDs**: Enforced via `/^[A-Z0-9_-]{3,24}$/`. Path traversal, control characters, and whitespace are rejected.
+- **Display Names**: Stripped of ASCII/Unicode control characters (`[\x00-\x1F\x7F-\x9F\u200B-\u200D\uFEFF]`) and normalized before room admission, while preserving legitimate international Unicode scripts.
+- **Payload Limits**: Point batches capped at 500 points per update; stroke points capped at 10,000 points; coordinates bounded to $[-100000, 100000]$; stroke width restricted to $0.5$–$150$px.
+
+### 10.2 Server-Side Token-Bucket Rate Limiting
+- Managed per socket via `SocketRateLimiter` (`server/src/security/rateLimiter.ts`):
+  - `CURSOR_MOVE`: Max 50 updates/sec burst (50/sec refill). Excess events dropped silently.
+  - `DRAW_UPDATE`: Max 60 batches/sec burst (60/sec refill). Emits `RATE_LIMITED` on breach.
+  - `OPERATION_APPLY`: Max 120 ops burst (60/sec refill). Accommodates fast offline replay while preventing automated spam.
+  - `JOIN_ROOM`: Max 5 joins burst (1/sec refill).
+- State cleaned up immediately on socket `disconnect`.
+
+### 10.3 Room Resource Bounds
+- `MAX_USERS_PER_ROOM = 50`: Rejects excess joins with `ROOM_FULL`.
+- `MAX_ACTIVE_STROKES_PER_USER = 10` & `MAX_ACTIVE_STROKES_PER_ROOM = 100`: Prevents active in-flight stroke hoarding.
+- `MAX_OPERATIONS_PER_ROOM = 10000`: Capped with protocol error `MAX_OPERATIONS_EXCEEDED` without history corruption.
+- `MAX_STROKES_PER_ROOM = 5000`: Bounded with `MAX_STROKES_EXCEEDED`.
+
+### 10.4 HTTP & CORS Defense
+- Disabled `X-Powered-By: Express`.
+- Defensive HTTP security headers applied (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`, `X-XSS-Protection: 0`, `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`, and restrictive API CSP).
+- Configurable multi-origin CORS verification (`CLIENT_URL` supporting single or comma-separated allowed origins).
+
+### 10.5 Client Offline Queue Storage Protection
+- `MAX_PENDING_OPERATIONS = 500`: Enforces bounded queue length.
+- Graceful handling of browser `QuotaExceededError` without data loss or application crashes.
+
+---
+
+## 11. Directory Structure
 
 ```text
 mindforge/ (SyncDraw Workspace Root)
@@ -461,11 +495,11 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   ├── canvas/                     # Local Canvas Engine
 │   │   │   ├── export.ts               # Blob-based PNG export utility
 │   │   │   ├── geometry.ts             # Segment distance & stroke intersection
-│   │   │   ├── history.ts              # Operation application & reversion
+│   │   │   ├── history.ts              # Operation application, reversion & O(1) index
 │   │   │   ├── pointer.ts              # Unified pointer controller
 │   │   │   ├── renderer.ts             # Bézier curve smoothing & tool alpha
 │   │   │   ├── scaling.ts              # High-DPI scaling & coordinates
-│   │   │   ├── stroke.ts               # Stroke factory
+│   │   │   ├── stroke.ts               # Stroke factory & in-place mutation
 │   │   │   └── types.ts                # Point, Stroke, CanvasOperation types
 │   │   ├── collaboration/              # Real-Time Client Abstraction
 │   │   │   ├── index.ts                # Module exports
@@ -474,7 +508,7 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   │   └── types.ts                # Client collaboration event contracts
 │   │   ├── components/
 │   │   │   ├── canvas/
-│   │   │   │   ├── Canvas.tsx          # Canvas host component
+│   │   │   │   ├── Canvas.tsx          # Canvas host component & rAF coalescing
 │   │   │   │   ├── ClearConfirmDialog.tsx # Clear confirmation modal
 │   │   │   │   └── Toolbar.tsx         # Floating drawing toolbar
 │   │   │   ├── collaboration/
@@ -509,11 +543,13 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   ├── rooms/
 │   │   │   ├── roomManager.ts          # In-memory room registry, cleanup & grace period
 │   │   │   └── roomState.ts            # Room state container factory
+│   │   ├── security/
+│   │   │   └── rateLimiter.ts          # Token-bucket WebSocket rate limiter
 │   │   ├── websocket/
 │   │   │   └── socket.ts               # Socket.IO lifecycle & ACK handling
 │   │   ├── utils/
 │   │   │   ├── colors.ts               # Collaborator color assignment
-│   │   │   └── validation.ts           # Payload & room ID validation
+│   │   │   └── validation.ts           # Payload, limits & display name sanitization
 │   │   ├── types/
 │   │   │   ├── collaboration.ts        # Server-authoritative contracts
 │   │   │   └── index.ts
@@ -523,11 +559,13 @@ mindforge/ (SyncDraw Workspace Root)
 │   ├── test-collaborative-history.mjs  # Automated history & undo/redo test suite (16 tests)
 │   ├── test-reconnect-sync.mjs         # Automated reconnect & offline sync test suite (16 tests)
 │   ├── test-performance.mjs            # Automated performance & scalability stress suite (6 tests)
+│   ├── test-security.mjs               # Automated security, abuse & authorization suite (22 tests)
 │   ├── package.json
 │   └── tsconfig.json
 │
 ├── .gitignore
 ├── ARCHITECTURE.md
+├── SECURITY.md
 ├── package.json
 └── README.md
 ```

@@ -14,7 +14,7 @@ SyncDraw is designed as a high-performance, real-time collaborative whiteboard p
 
 SyncDraw is currently in active stage-by-stage development.
 
-### Implemented Features (Sections 1 – 10)
+### Implemented Features (Sections 1 – 11)
 - **Full-Stack TypeScript Architecture**: Monorepo structure using npm workspaces (`client/` and `server/`), strict TypeScript, and ESLint.
 - **Backend Infrastructure**: Node.js + Express REST gateway with `/health` monitoring, CORS handling, and graceful shutdown.
 - **Product Landing Page**: Responsive hero, brand wordmark, capabilities preview, and static architectural illustration.
@@ -82,6 +82,13 @@ SyncDraw is currently in active stage-by-stage development.
   - **Component Memoization & Hook Rules**: Pure functional subcomponents (`RoomHeader`, `Toolbar`, `ClearConfirmDialog`) memoized via `React.memo` with stabilized callbacks and strict top-level hook compliance.
   - **Development Diagnostics HUD (`PerfOverlay`)**: Zero-production-overhead HUD tracking rolling FPS, active users, operations, queue depth, and round-trip heartbeat latency (`?debug=true`).
   - **Comprehensive Stress Test Suite**: 6-part automated stress test verifying 1,000-point streams (32k+ pts/sec), 5,000 operations, 10 concurrent collaborators, and rapid reconnect cycling.
+- **Security, Rate Limiting & Abuse Hardening (Section 11)**:
+  - **Token-Bucket WebSocket Rate Limiting**: Per-socket token-bucket protection against DoS/flooding across `CURSOR_MOVE` (50 burst, 50/s refill), `DRAW_UPDATE` (60 burst, 60/s refill), `OPERATION_APPLY` (120 burst, 60/s refill), and `JOIN_ROOM` (5 burst, 1/s refill), with automatic cleanup on socket disconnect.
+  - **Room Resource & Memory Bounds**: Strict capacity limits preventing memory exhaustion (`MAX_USERS_PER_ROOM = 50`, `MAX_ACTIVE_STROKES_PER_USER = 10`, `MAX_ACTIVE_STROKES_PER_ROOM = 100`, `MAX_OPERATIONS_PER_ROOM = 10000`, `MAX_STROKES_PER_ROOM = 5000`) with protocol-level error reporting.
+  - **Input Sanitization & Unicode Preservation**: Strips ASCII/Unicode control characters (`[\x00-\x1F\x7F-\x9F\u200B-\u200D\uFEFF]`) and normalizes whitespace while preserving valid international Unicode; enforces strict `/^[A-Z0-9_-]{3,24}$/` regex on room IDs.
+  - **HTTP & Gateway Defense**: Disabled `X-Powered-By`; enforced defensive HTTP security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-XSS-Protection`, COOP, CORP, API CSP); hardened multi-origin CORS verification.
+  - **Client Offline Storage Quota Protection**: Enforces 500-record cap on browser `localStorage` offline queues (`MAX_PENDING_OPERATIONS = 500`) with defensive error recovery on `QuotaExceededError`.
+  - **Automated Security Test Suite**: 22 automated attack and abuse test scenarios (`npm run test:security -w server`) covering validation, authorization, rate limiting, and room isolation.
 
 ---
 
@@ -184,7 +191,7 @@ npm run build
 ```
 
 ### Automated Real-Time Test Suites
-
+ 
 ```bash
 # Run automated drawing synchronization test suite (11 test cases)
 npm run test:drawing -w server
@@ -200,6 +207,9 @@ npm run test:reconnect -w server
 
 # Run automated performance, scalability & stress test suite (6 stress test cases)
 npm run test:performance -w server
+
+# Run automated security, abuse & authorization test suite (22 test cases)
+npm run test:security -w server
 ```
 
 ---
