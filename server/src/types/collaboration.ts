@@ -184,6 +184,12 @@ export interface ClientToServerEvents {
   OPERATION_APPLY: (payload: unknown) => void;
 }
 
+export interface OperationAckData {
+  operationId: string;
+  accepted: boolean;
+  reason?: string;
+}
+
 export interface ServerToClientEvents {
   ROOM_JOINED: (data: RoomJoinedData) => void;
   USER_JOINED: (data: UserJoinedData) => void;
@@ -196,6 +202,7 @@ export interface ServerToClientEvents {
   ERASE_STROKES: (data: EraseStrokesData) => void;
   CURSOR_UPDATE: (data: CursorUpdateData) => void;
   OPERATION_APPLIED: (data: OperationAppliedData) => void;
+  OPERATION_ACK: (data: OperationAckData) => void;
 }
 
 export interface SocketData {
