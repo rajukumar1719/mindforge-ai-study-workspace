@@ -32,7 +32,7 @@ Browser A (Room ABC123)       Browser B (Room ABC123)       Browser C (Room XYZ7
 ```
 
 > [!NOTE]
-> **Section 7 Complete**: Live collaborative cursors and presence polish are fully implemented. Real-time multiplayer cursor movements stream smoothly via throttled Socket.IO events (`CURSOR_MOVE` / `CURSOR_UPDATE`) and render on a dedicated GPU-composited overlay layer (`translate3d`), completely decoupled from canvas redraws and React state churn. Presence displays colored initial avatar bubbles with active status indicators. Collaborative undo/redo and collaborative clear are scheduled for Section 8.
+> **Section 8 Complete**: Collaborative undo/redo, collaborative clear, and deterministic operation history are fully implemented. Undo and redo are strictly author-scoped: a collaborator can undo and redo their own operations without removing another collaborator's work. The canonical operation log is maintained non-destructively on the server, and visible strokes are deterministically reconstructed on-demand.
 
 ---
 
