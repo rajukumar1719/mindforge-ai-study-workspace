@@ -1,5 +1,5 @@
-import type { Room, Collaborator, Stroke, Point } from '../types/collaboration.js';
-import { createRoomState } from './roomState.js';
+import type { Room, Collaborator, Stroke, Point, CollaborativeOperation, OperationRecord } from '../types/collaboration.js';
+import { createRoomState, reconstructRoomStrokes } from './roomState.js';
 
 /**
  * In-Memory Room Manager
@@ -104,10 +104,26 @@ export class RoomManager {
       room.strokes.push(stroke);
     }
 
+    // Automatically record corresponding add-stroke operation if not already recorded
+    const opId = `op_${stroke.id}`;
+    if (!room.appliedOperationIds.has(opId)) {
+      room.appliedOperationIds.add(opId);
+      room.operations.push({
+        operation: {
+          operationId: opId,
+          type: 'add-stroke',
+          userId: stroke.userId,
+          stroke,
+          timestamp: stroke.createdAt || Date.now(),
+        },
+        active: true,
+      });
+    }
+
     return stroke;
   }
 
-  public eraseStrokes(roomId: string, strokeIds: string[]): string[] {
+  public eraseStrokes(roomId: string, strokeIds: string[], operationId?: string, userId?: string): string[] {
     const room = this.rooms.get(roomId);
     if (!room) return [];
 
@@ -132,6 +148,21 @@ export class RoomManager {
       }
     }
 
+    // Record erase operation if provided and not already recorded
+    if (operationId && !room.appliedOperationIds.has(operationId)) {
+      room.appliedOperationIds.add(operationId);
+      room.operations.push({
+        operation: {
+          operationId,
+          type: 'erase-strokes',
+          userId: userId || '',
+          strokeIds,
+          timestamp: Date.now(),
+        },
+        active: true,
+      });
+    }
+
     return erasedIds;
   }
 
@@ -139,6 +170,144 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return [];
     return [...room.strokes];
+  }
+
+  public getOperations(roomId: string): OperationRecord[] {
+    const room = this.rooms.get(roomId);
+    if (!room) return [];
+    return [...room.operations];
+  }
+
+  /**
+   * Applies an authoritative collaborative operation (add-stroke, erase-strokes, clear-canvas, undo, redo).
+   */
+  public applyCollaborativeOperation(
+    roomId: string,
+    op: CollaborativeOperation
+  ): { success: boolean; record?: OperationRecord; error?: { code: string; message: string } } {
+    const room = this.getOrCreateRoom(roomId);
+
+    // Reject duplicate operationId
+    if (room.appliedOperationIds.has(op.operationId)) {
+      return {
+        success: false,
+        error: { code: 'DUPLICATE_OPERATION', message: `Operation ${op.operationId} has already been applied.` },
+      };
+    }
+
+    if (op.type === 'undo') {
+      const targetRecord = room.operations.find((r) => r.operation.operationId === op.targetOperationId);
+      if (!targetRecord) {
+        return {
+          success: false,
+          error: { code: 'TARGET_NOT_FOUND', message: `Target operation ${op.targetOperationId} not found in history.` },
+        };
+      }
+
+      // Author-scoped undo enforcement: user can only undo their own operations
+      if (targetRecord.operation.userId !== op.userId) {
+        return {
+          success: false,
+          error: { code: 'AUTHOR_MISMATCH', message: 'Cannot undo another user\'s operation.' },
+        };
+      }
+
+      if (!targetRecord.active) {
+        return {
+          success: false,
+          error: { code: 'ALREADY_UNDONE', message: `Target operation ${op.targetOperationId} is already undone.` },
+        };
+      }
+
+      // Deactivate target operation
+      targetRecord.active = false;
+
+      // Commit undo operation record
+      const record: OperationRecord = { operation: op, active: true };
+      room.operations.push(record);
+      room.appliedOperationIds.add(op.operationId);
+
+      // Deterministically rebuild canonical room strokes
+      room.strokes = reconstructRoomStrokes(room.operations);
+      return { success: true, record };
+    }
+
+    if (op.type === 'redo') {
+      const targetRecord = room.operations.find((r) => r.operation.operationId === op.targetOperationId);
+      if (!targetRecord) {
+        return {
+          success: false,
+          error: { code: 'TARGET_NOT_FOUND', message: `Target operation ${op.targetOperationId} not found in history.` },
+        };
+      }
+
+      // Author-scoped redo enforcement: user can only redo their own operations
+      if (targetRecord.operation.userId !== op.userId) {
+        return {
+          success: false,
+          error: { code: 'AUTHOR_MISMATCH', message: 'Cannot redo another user\'s operation.' },
+        };
+      }
+
+      if (targetRecord.active) {
+        return {
+          success: false,
+          error: { code: 'NOT_UNDONE', message: `Target operation ${op.targetOperationId} is not currently undone.` },
+        };
+      }
+
+      // Reactivate target operation
+      targetRecord.active = true;
+
+      // Commit redo operation record
+      const record: OperationRecord = { operation: op, active: true };
+      room.operations.push(record);
+      room.appliedOperationIds.add(op.operationId);
+
+      // Deterministically rebuild canonical room strokes
+      room.strokes = reconstructRoomStrokes(room.operations);
+      return { success: true, record };
+    }
+
+    if (op.type === 'add-stroke') {
+      const record: OperationRecord = { operation: op, active: true };
+      room.operations.push(record);
+      room.appliedOperationIds.add(op.operationId);
+
+      // Add to room.strokes if not present
+      if (!room.strokes.some((s) => s.id === op.stroke.id)) {
+        room.strokes.push(op.stroke);
+      }
+      return { success: true, record };
+    }
+
+    if (op.type === 'erase-strokes') {
+      const record: OperationRecord = { operation: op, active: true };
+      room.operations.push(record);
+      room.appliedOperationIds.add(op.operationId);
+
+      const idSet = new Set(op.strokeIds);
+      room.strokes = room.strokes.filter((s) => !idSet.has(s.id));
+      for (const id of op.strokeIds) {
+        room.activeStrokes.delete(id);
+      }
+      return { success: true, record };
+    }
+
+    if (op.type === 'clear-canvas') {
+      const record: OperationRecord = { operation: op, active: true };
+      room.operations.push(record);
+      room.appliedOperationIds.add(op.operationId);
+
+      room.strokes = [];
+      room.activeStrokes.clear();
+      return { success: true, record };
+    }
+
+    return {
+      success: false,
+      error: { code: 'INVALID_OPERATION_TYPE', message: 'Unsupported operation type.' },
+    };
   }
 
   public cleanActiveStrokesForUser(roomId: string, userId: string): string[] {
