@@ -160,3 +160,42 @@ The automated security test suite verifies 22 attack and abuse vectors:
 20. Rapid `JOIN_ROOM` cycling throttled (`RATE_LIMITED`).
 21. Disconnect cleanup of active strokes and rate-limit tracking.
 22. Server remains fully operational and responsive to legitimate clients after all attack scenarios.
+
+---
+
+## 10. Error Handling & Structured Security Error Codes
+
+SyncDraw standardizes on predictable, structured error codes transmitted via `ERROR` and `OPERATION_ACK` events:
+
+| Error Code | HTTP / Socket Event | Condition | Client Recovery Behavior |
+|---|---|---|---|
+| `INVALID_PAYLOAD` | `JOIN_ROOM` | Non-object or malformed JSON payload | Abort connection attempt, alert user. |
+| `INVALID_ROOM_ID` | `JOIN_ROOM` | Room ID not matching `/^[A-Z0-9_-]{3,24}$/` | Prompt user to enter a valid room code. |
+| `INVALID_DISPLAY_NAME` | `JOIN_ROOM` | Name `< 2` or `> 30` characters after sanitization | Prompt user for a valid display name. |
+| `ROOM_FULL` | `JOIN_ROOM` | Room active participants $\ge 50$ | Notify user room has reached capacity. |
+| `UNAUTHORIZED_ACTION` | Drawing / Ops | Event emitted before verified `JOIN_ROOM` | Drop action; client must re-join room. |
+| `AUTHOR_MISMATCH` | `OPERATION_APPLY` | Attempting to undo/redo another user's operation | Rejection; maintain local author scope. |
+| `RATE_LIMITED` | Drawing / Ops / Join | Token bucket empty for socket action | Throttle emissions; notify user if sustained. |
+| `MAX_OPERATIONS_EXCEEDED` | `OPERATION_APPLY` | Room reached 10,000 operation ceiling | Reject new durable mutations without corrupting history. |
+| `MAX_STROKES_EXCEEDED` | `OPERATION_APPLY` | Room reached 5,000 active strokes limit | Reject new stroke operations. |
+| `MAX_ACTIVE_STROKES_EXCEEDED` | `DRAW_START` | Room concurrent in-flight strokes $\ge 100$ | Drop new stroke until peers finalize. |
+| `MAX_USER_ACTIVE_STROKES` | `DRAW_START` | User concurrent in-flight strokes $\ge 10$ | Drop new stroke until user finalizes. |
+| `ALREADY_CANONICAL` | `OPERATION_APPLY` | Duplicate operation ID already committed | Idempotently acknowledged (`accepted: true`). |
+
+---
+
+## 11. Known Architectural & Security Limitations
+
+1. **In-Memory Room State**:
+   - Rooms and operation logs reside in server heap memory. A server restart clears active room state (empty rooms are evicted after a 2-minute reconnect grace period).
+   - *Mitigation*: Memory bounds (`MAX_OPERATIONS_PER_ROOM = 10000`, `MAX_STROKES_PER_ROOM = 5000`) prevent runaway heap growth.
+2. **Single-Node Rate Limiter**:
+   - Token buckets are stored in memory per socket within the running Node.js process. Distributed horizontal clustering across multiple instances would require an external coordinator (such as Redis).
+   - *Mitigation*: Single-node token buckets strictly isolate and throttle abuse per connection with zero memory leaks.
+3. **Session-Based Pseudonymous Authentication**:
+   - SyncDraw uses session display names and socket IDs rather than cryptographic password or OAuth accounts.
+   - *Mitigation*: Author-scoped operations and identity rewriting prevent any client from spoofing another collaborator's socket ID or mutating their operations within a session.
+4. **Transitive `qs` Advisory**:
+   - `express@4.22.2` depends on `qs` (2.2.5 – 6.15.3) which has 2 moderate advisories (`GHSA-x5fp-wj9c-mxmx`, `GHSA-4mjr-xmp4-gh2g`).
+   - *Assessment*: SyncDraw does not process query-string parameters with `qs`. Upgrading Express blindly to a breaking major prerelease was avoided to maintain protocol stability.
+
