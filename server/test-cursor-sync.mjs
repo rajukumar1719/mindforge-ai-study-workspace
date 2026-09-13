@@ -101,20 +101,32 @@ async function runCursorSyncTests() {
   };
   clientB.on('CURSOR_UPDATE', tempListener);
 
-  // Negative x
-  clientA.emit('CURSOR_MOVE', { x: -50, y: 100 });
-  await wait(50);
-  // Exceeds max boundary (100,000)
+  // Exceeds max boundary (> 100,000)
   clientA.emit('CURSOR_MOVE', { x: 150000, y: 100 });
+  await wait(50);
+  // Exceeds negative boundary (< -100,000)
+  clientA.emit('CURSOR_MOVE', { x: -150000, y: 100 });
+  await wait(50);
+  // Exceeds y max boundary
+  clientA.emit('CURSOR_MOVE', { x: 100, y: 250000 });
   await wait(50);
   // NaN coordinates
   clientA.emit('CURSOR_MOVE', { x: NaN, y: 100 });
+  await wait(50);
+  // Infinity coordinates
+  clientA.emit('CURSOR_MOVE', { x: Infinity, y: 100 });
   await wait(50);
   // String coordinates
   clientA.emit('CURSOR_MOVE', { x: 'invalid', y: 100 });
   await wait(50);
   // Missing fields
   clientA.emit('CURSOR_MOVE', { x: 100 });
+  await wait(50);
+  // Array payload
+  clientA.emit('CURSOR_MOVE', [100, 200]);
+  await wait(50);
+  // String payload
+  clientA.emit('CURSOR_MOVE', 'invalid-payload');
   await wait(50);
 
   clientB.off('CURSOR_UPDATE', tempListener);
