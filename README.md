@@ -14,22 +14,24 @@ SyncDraw is designed as a high-performance, real-time collaborative whiteboard p
 
 SyncDraw is currently in active stage-by-stage development.
 
-- **Section 1 (Project Foundation)**: Completed
-  - Full-stack TypeScript repository structure initialized (`client/` and `server/` orchestrated via npm workspaces).
-  - React + Vite + Tailwind CSS frontend shell established with strict type checking.
-  - Node.js + Express backend foundation configured with environment management, `/health` endpoint, and graceful shutdown.
-  - Development tooling, strict typing, and build pipelines verified.
-
-- **Section 2 (Landing Page + Room Entry Flows)**: Completed
-  - Clean, developer-grade landing page with SyncDraw branding, hero tagline, and capabilities preview.
-  - Accessible modal dialog system with keyboard focus management and `Escape` key dismissal.
-  - Create Room flow: Display name validation, URL-safe room ID generation (e.g. `ABC7KQ`), session identity caching, and navigation to `/room/:roomId`.
-  - Join Room flow: Display name and room code validation, room ID normalization, and direct routing.
-  - Client-side routing (`/`, `/room/:roomId`, `*`) using React Router.
-  - Room Page Placeholder: Direct link entry handling with participant name prompt, URL-safe room code validation, 1-click room link sharing, and explicit status indicators.
-  - Friendly 404 Not Found route.
-
-- **Subsequent Sections**: Under development (see Planned Features below).
+### Implemented Features (Sections 1 – 3)
+- **Full-Stack TypeScript Architecture**: Monorepo structure using npm workspaces (`client/` and `server/`), strict TypeScript, and ESLint.
+- **Backend Foundation**: Node.js + Express REST gateway with `/health` monitoring, CORS handling, and graceful shutdown.
+- **Product Landing Page**: Responsive hero, brand wordmark, capabilities preview, and static architectural illustration.
+- **Room Entry Flows**:
+  - Create Room: Display name validation, collision-resistant 6-character room ID generation (`ABC7KQ`), session identity caching, and routing.
+  - Join Room: Room code validation and uppercase normalization.
+  - Direct Link Handling: Automatic participant name prompt for direct `/room/:roomId` links.
+- **Accessible Modal System**: Focus trapping, `Escape` key dismissal, backdrop click handling, and ARIA attributes.
+- **Local Canvas Drawing Engine (Section 3)**:
+  - High-performance HTML5 Canvas 2D engine decoupled from React re-renders.
+  - Unified Pointer Events (`pointerdown`, `pointermove`, `pointerup`, `pointercancel`) supporting mouse, touch, and stylus.
+  - Smooth quadratic Bézier curve interpolation for fluid whiteboard stroke rendering.
+  - High-DPI / Retina resolution scaling (`devicePixelRatio` correction).
+  - Dynamic `ResizeObserver` maintaining stroke integrity and redrawing without loss.
+  - Professional floating toolbar with Pen tool, 6-color palette (`Charcoal`, `Indigo`, `Rose`, `Emerald`, `Amber`, `Violet`), and 4 brush sizes (`2px`, `4px`, `8px`, `14px`).
+  - Subtle empty state guide (*"Start drawing anywhere..."*) that dismisses on first stroke.
+  - Canonical immutable stroke data model ready for WebSocket delta sync.
 
 ---
 
@@ -37,14 +39,13 @@ SyncDraw is currently in active stage-by-stage development.
 
 The following features are planned for upcoming development sections:
 
-- **Interactive Drawing Engine** *(Planned — Section 3)*: Freehand pen tool, highlighter, dynamic brush stroke smoothing, customizable stroke color/width, and geometric shapes.
-- **Canvas Operations** *(Planned)*: Pan, zoom, responsive resize handling, canvas clear, and grid overlay.
 - **Real-Time Collaboration** *(Planned — Section 4+)*: Bidirectional WebSocket synchronization, low-latency delta broadcasting, and optimistic local rendering.
-- **Room Management & Persistence** *(Planned)*: Authoritative server-side room registry, active participant presence tracking, and state persistence.
 - **Live Collaborative Cursors** *(Planned)*: Synchronized multiplayer mouse cursors displaying teammate names and distinct user color tags.
-- **State History & Conflict Resolution** *(Planned)*: Local and remote undo/redo management, chronological action history stack, and deterministic convergence.
-- **Persistence & Export** *(Planned)*: Canvas snapshot export to PNG/SVG/JSON.
-- **Offline Resilience** *(Planned)*: Reconnection queue buffering drawing actions during network blips.
+- **Collaborator Presence** *(Planned)*: Real-time room participant rosters and presence heartbeats.
+- **Collaborative State Management** *(Planned)*: Undo / Redo history stacks, conflict resolution, and deterministic canvas convergence.
+- **Canvas Expansion Tools** *(Planned)*: Eraser tool, highlighter, geometric shapes (rectangle, circle, arrow), and text annotations.
+- **Persistence & Export** *(Planned)*: Canvas snapshot export to PNG/SVG/JSON, with room state persistence.
+- **Offline Resilience & Reconnection** *(Planned)*: Reconnection queue buffering drawing actions during network blips.
 
 ---
 
@@ -53,6 +54,7 @@ The following features are planned for upcoming development sections:
 ### Frontend (`client`)
 - **Framework**: React 19
 - **Routing**: React Router v7 (`react-router-dom`)
+- **Canvas Engine**: Native HTML5 Canvas 2D Context + Quadratic Bézier Smoothing
 - **Language**: TypeScript (Strict Mode)
 - **Build Tool**: Vite
 - **Styling**: Tailwind CSS v4

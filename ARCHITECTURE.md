@@ -1,10 +1,10 @@
 # SyncDraw Architecture Document
 
-This document describes the architectural foundation of **SyncDraw** ("Real-Time Collaborative Drawing Canvas"), covering current structural choices and planned design layers for future development phases.
+This document details the architectural foundation and rendering mechanics of **SyncDraw** ("Real-Time Collaborative Drawing Canvas"), covering current structural choices and planned design layers for future development phases.
 
 ---
 
-## 1. High-Level Flow Architecture
+## 1. High-Level System Flow
 
 ```text
 Landing Page (/)
@@ -22,103 +22,139 @@ Room Route (/room/:roomId)
     │
     │  • Room ID Validation & Shareable Link
     │  • Direct URL Entry Participant Name Prompt
-    │  • Room Workspace Placeholder
+    ▼
+Canvas Drawing Engine (Active — Section 3)
+    │
+    │  • Native HTML5 Canvas 2D Surface
+    │  • Resolution-Independent Stroke Data Model
+    │  • Unified Pointer Events (Mouse / Touch / Stylus)
+    │  • Quadratic Bézier Smoothing
+    │  • High-DPI / Retina Scaling
+    │  • Resize Resilience via ResizeObserver
     ▼
 Future WebSocket Collaboration Layer (Planned — Section 4+)
     │
     │  • Bidirectional Delta Broadcasting
-    │  • Live Presence & Cursor Coordinates
-    ▼
-Future Canvas Engine (Planned — Section 3)
-    │
-    │  • Native HTML5 2D Path Rendering
-    │  • Vector Double Buffering
+    │  • Live Presence & Multi-User Cursor Coordinates
+    │  • Conflict Resolution & Synchronized History Stack
 ```
 
 ---
 
-## 2. Current Architecture Components
+## 2. Canvas Rendering Architecture (Section 3)
 
-### 2.1 Routing & Navigation (`client/`)
-- **React Router**: Client-side declarative routing configuration managing:
-  - `/` -> `HomePage` (Landing page, capabilities, modals)
-  - `/room/:roomId` -> `RoomPage` (Room workspace placeholder with direct link entry support)
-  - `*` -> `NotFoundPage` (Clean 404 recovery)
-- **Room ID Management**:
-  - `generateRoomId()`: Employs an unambiguous alphanumeric character set (excluding 0/O, 1/I) to produce 6-character room codes (e.g. `ABC7KQ`).
-  - `isValidRoomId()`: Enforces 3–24 character bounds and URL-safe characters (`[A-Z0-9_-]`).
-- **Temporary Client-Side Session State**:
-  - `sessionStorage` wrapper retains transient user display names across page navigation in the current browser tab.
-  - *Architectural Note*: This is strictly transient state storage, not authentication. Authoritative room membership and persistent user sessions will be enforced on the server in future collaboration phases.
+The canvas engine is built to deliver smooth 60fps sketching with low latency, high visual fidelity, and clean decoupling from React's component lifecycle.
 
-### 2.2 Accessible Dialog System
-- **Modal Architecture**:
-  - Semantic `role="dialog"` and `aria-modal="true"`.
-  - Global `Escape` key listener for immediate dismissal.
-  - Automatic focus management targeting the initial input field on modal mount.
-  - Restores focus to the triggering element upon dialog closure.
-  - Background overlay click-to-close with scroll containment.
+### 2.1 HTML5 Canvas API vs. SVG Tradeoffs
+- **Canvas API (Chosen)**: Direct immediate-mode rasterization using HTML5 2D Context. Unlike retained-mode SVG DOM nodes (which incur heavy layout and tree overhead when handling thousands of path coordinates), HTML5 Canvas handles arbitrary stroke density with consistent frame times.
+- **Stroke Data as the Source of Truth**: While the canvas is an immediate-mode surface, all drawing actions are modeled as immutable, structured data objects (`Stroke[]`). This enables complete replayability, serialization, and future network transmission.
 
-### 2.3 Backend Foundation (`server/`)
-- **Express HTTP Gateway**: Lightweight Node.js server handling REST communication, CORS origin restrictions, and pre-flight validation.
-- **Health Check Endpoint**: `GET /health` returns live server status, operational uptime, and timestamp for readiness probes.
-- **Prepared HTTP Server**: Uses Node's standard `http.Server` wrapper around Express, ready for WebSocket upgrade hooks in subsequent sections.
+### 2.2 Stroke Data Model
+```typescript
+interface Point {
+  x: number;          // Logical CSS X coordinate
+  y: number;          // Logical CSS Y coordinate
+  pressure?: number;  // Stylus/touch pressure (0.0 to 1.0)
+}
+
+interface Stroke {
+  id: string;         // Unique collision-resistant UUID (crypto.randomUUID)
+  userId: string;     // Creator display name / ID
+  tool: 'pen';        // Active drawing tool
+  color: string;      // Hex/RGB stroke color
+  width: number;      // Logical stroke width in pixels
+  points: Point[];    // Chronological array of points
+  createdAt: number;  // Epoch timestamp (ms)
+}
+```
+
+### 2.3 Unified Pointer Event Pipeline
+- **Pointer Events**: Employs `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, and `pointerleave` instead of separate mouse and touch implementations, providing unified handling for mouse, touch screens, and active stylus pens.
+- **Pointer Capture**: Uses `canvas.setPointerCapture(pointerId)` upon `pointerdown`. This guarantees that strokes continue tracking smoothly even if the user swiftly drags outside the canvas boundary.
+- **Gesture Suppression**: Sets `touchAction: 'none'` on the `<canvas>` element to suppress browser pull-to-refresh, pan, and pinch zoom gestures exclusively across the drawing surface without disrupting normal scrolling outside the canvas container.
+
+### 2.4 Coordinate Conversion & High-DPI / Retina Handling
+- **Device Pixel Ratio (`dpr`)**:
+  ```typescript
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = Math.round(logicalWidth * dpr);
+  canvas.height = Math.round(logicalHeight * dpr);
+  canvas.style.width = `${logicalWidth}px`;
+  canvas.style.height = `${logicalHeight}px`;
+  ctx.scale(dpr, dpr);
+  ```
+  This ensures 1 logical CSS pixel maps to physical hardware pixels, eliminating blurriness on 4K, MacBook Retina, and mobile screens.
+- **Coordinate Normalization**: Logical points are calculated relative to `canvas.getBoundingClientRect()`, accounting for CSS scaling and browser zoom:
+  ```typescript
+  const rawX = (e.clientX - rect.left) * (logicalWidth / rect.width);
+  const rawY = (e.clientY - rect.top) * (logicalHeight / rect.height);
+  ```
+
+### 2.5 Quadratic Bézier Curve Smoothing
+Rather than rendering crude polyline segments between raw sampled points (which appear jagged), the renderer computes midpoints between successive points and draws smooth quadratic curves:
+```typescript
+ctx.beginPath();
+ctx.moveTo(points[0].x, points[0].y);
+
+for (let i = 1; i < points.length - 1; i++) {
+  const current = points[i];
+  const next = points[i + 1];
+  const midX = (current.x + next.x) / 2;
+  const midY = (current.y + next.y) / 2;
+  ctx.quadraticCurveTo(current.x, current.y, midX, midY);
+}
+
+ctx.lineTo(last.x, last.y);
+ctx.stroke();
+```
+Single-point taps render as round dots (`ctx.arc`).
+
+### 2.6 Resize Strategy
+- **ResizeObserver**: Observes the canvas parent container element.
+- **Preserved Geometry**: Upon resize, physical canvas dimensions are updated and `ctx.scale(dpr, dpr)` is reapplied.
+- **Non-Destructive Redraw**: Because all strokes are preserved as resolution-independent logical vectors in `strokesRef`, `renderAllStrokes(ctx, strokes, width, height)` immediately restores the entire artwork with zero loss of quality or stroke truncation.
+
+### 2.7 Performance & React Decoupling
+- High-frequency pointer events (`pointermove`) run at 60–120Hz. To avoid React state thrashing, active strokes are accumulated in `useRef` instances and rendered incrementally via direct 2D context drawing (`renderIncrementalSegment`).
+- React state (`setStrokes`) is updated only when a stroke is finalized on `pointerup`, ensuring the UI thread remains responsive and stutter-free.
 
 ---
 
-## 3. Planned Architecture Components
-
-Components below represent upcoming milestones and are marked explicitly as *(Planned)*.
-
-### 3.1 Future Canvas Rendering Layer *(Planned — Section 3)*
-- **HTML5 Canvas / OffscreenCanvas**: Native 2D context rendering engine capable of high frame rates (60fps+) during continuous input.
-- **Stroke Representation**: Drawing operations modeled as immutable vector path commands (points array, stroke width, color, tool type) rather than raw raster bitmaps.
-- **Input Pipeline**: Pointer event listeners handling touch, mouse, and stylus pressure sensitivity with quadratic Bézier smoothing.
-- **Local Double Buffering**: Offscreen canvas layer to decouple active stroke rendering from background grid and static canvas elements.
-
-### 3.2 Future WebSocket Layer *(Planned — Section 4+)*
-- **Protocol**: Bidirectional event-driven protocol implemented over WebSocket (`ws` or `Socket.io`).
-- **Transport Security & Framing**: Lightweight binary or JSON message envelopes containing message type, room ID, user ID, client timestamp, and payload.
-- **Optimistic Broadcast**: Drawing actions rendered instantly to the local canvas while being pushed asynchronously to the WebSocket channel.
-- **Live Presence & Cursor Sync**: Coordinate broadcasting throttled to ~30-60Hz with participant color coding.
-
-### 3.3 Future Room Management Layer *(Planned)*
-- **Namespace & Room Isolation**: Independent room instances identified by unique room IDs.
-- **Session Registry**: In-memory mapping of active rooms, connected socket client IDs, and per-user metadata.
-- **Persistence**: Snapshot serializations and state recovery for room rejoiners.
-
----
-
-## 4. Current Directory Structure
+## 3. Directory Structure
 
 ```text
 mindforge/ (SyncDraw Workspace Root)
 ├── client/
 │   ├── src/
+│   │   ├── canvas/                     # Standalone Canvas Engine
+│   │   │   ├── index.ts                # Public canvas module exports
+│   │   │   ├── pointer.ts              # Pointer capture & unified event controller
+│   │   │   ├── renderer.ts             # Bézier curve smoothing & redraw routines
+│   │   │   ├── scaling.ts              # High-DPI resolution & coordinate transformation
+│   │   │   ├── stroke.ts               # Stroke factory & immutability helpers
+│   │   │   └── types.ts                # Point, Stroke, and CanvasSettings types
 │   │   ├── components/
+│   │   │   ├── canvas/
+│   │   │   │   ├── Canvas.tsx          # React Canvas host & ResizeObserver
+│   │   │   │   └── Toolbar.tsx         # Floating pen, palette, and brush size controls
 │   │   │   ├── ui/
-│   │   │   │   └── Modal.tsx           # Accessible modal dialog with focus management
-│   │   │   ├── CreateRoomDialog.tsx    # Modal form with room ID generation
+│   │   │   │   └── Modal.tsx           # Accessible modal dialog
+│   │   │   ├── CreateRoomDialog.tsx    # Room creation modal
 │   │   │   ├── FeatureSection.tsx      # Core capabilities grid
-│   │   │   ├── Header.tsx              # Brand header with CTA
-│   │   │   ├── Hero.tsx                # Hero section with brand taglines
-│   │   │   ├── JoinRoomDialog.tsx      # Modal form with room ID validation
-│   │   │   ├── ProductPreview.tsx      # Honest static canvas preview
-│   │   │   ├── RoomHeader.tsx          # Room bar with 1-click link sharing
-│   │   │   └── StatusBadge.tsx         # Connection indicator component
+│   │   │   ├── Header.tsx              # Brand header
+│   │   │   ├── Hero.tsx                # Hero section
+│   │   │   ├── JoinRoomDialog.tsx      # Room join modal
+│   │   │   ├── ProductPreview.tsx      # Static architecture illustration
+│   │   │   ├── RoomHeader.tsx          # Room header with link sharing & status
+│   │   │   └── StatusBadge.tsx         # Connection status badge
 │   │   ├── pages/
-│   │   │   ├── HomePage.tsx            # Landing page layout
-│   │   │   ├── NotFoundPage.tsx        # 404 route
-│   │   │   └── RoomPage.tsx            # Room placeholder with direct URL entry
-│   │   ├── types/
-│   │   │   ├── index.ts                # Central types export
-│   │   │   └── room.ts                 # Room, session, and modal type contracts
-│   │   ├── utils/
-│   │   │   ├── cn.ts                   # Class name helper
-│   │   │   ├── roomId.ts               # Room ID generation, normalization, validation
-│   │   │   └── storage.ts              # Session storage wrapper
-│   │   ├── App.tsx                     # React Router definition
-│   │   ├── index.css                   # Tailwind CSS v4 styling
+│   │   │   ├── HomePage.tsx            # Landing page
+│   │   │   ├── NotFoundPage.tsx        # 404 page
+│   │   │   └── RoomPage.tsx            # Room workspace host
+│   │   ├── types/                      # Client type definitions
+│   │   ├── utils/                      # Utilities (roomId, storage, cn)
+│   │   ├── App.tsx                     # Route definitions
+│   │   ├── index.css                   # Tailwind CSS styling
 │   │   ├── main.tsx                    # Client entry point
 │   │   └── vite-env.d.ts               # Vite types
 │   ├── .env.example
@@ -131,14 +167,13 @@ mindforge/ (SyncDraw Workspace Root)
 ├── server/
 │   ├── src/
 │   │   ├── types/
-│   │   │   └── index.ts
-│   │   └── server.ts                   # Express server & health endpoint
+│   │   └── server.ts
 │   ├── .env.example
 │   ├── package.json
 │   └── tsconfig.json
 │
 ├── .gitignore
 ├── ARCHITECTURE.md
-├── package.json                        # Root workspace orchestration
+├── package.json
 └── README.md
 ```
