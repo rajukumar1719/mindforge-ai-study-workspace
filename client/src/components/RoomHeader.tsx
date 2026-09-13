@@ -9,6 +9,7 @@ interface RoomHeaderProps {
   connectionStatus: ConnectionStatus;
   collaborators: Collaborator[];
   currentUserId?: string;
+  pendingCount?: number;
 }
 
 export const RoomHeader: React.FC<RoomHeaderProps> = ({
@@ -17,6 +18,7 @@ export const RoomHeader: React.FC<RoomHeaderProps> = ({
   connectionStatus,
   collaborators,
   currentUserId,
+  pendingCount = 0,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -50,6 +52,12 @@ export const RoomHeader: React.FC<RoomHeaderProps> = ({
       bg: 'bg-amber-50 border-amber-200 text-amber-800',
       dot: 'bg-amber-500 animate-ping',
       title: 'Connection lost; attempting to reconnect...',
+    },
+    offline: {
+      label: 'Offline',
+      bg: 'bg-slate-100 border-slate-300 text-slate-700',
+      dot: 'bg-slate-400',
+      title: 'Offline — changes will sync when connection returns',
     },
     disconnected: {
       label: 'Disconnected',
@@ -138,6 +146,20 @@ export const RoomHeader: React.FC<RoomHeaderProps> = ({
             <span className={`w-1.5 h-1.5 rounded-full ${currentStatus.dot}`} />
             <span>{currentStatus.label}</span>
           </div>
+
+          {/* Pending Offline Operations Indicator */}
+          {pendingCount > 0 && (
+            <div
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300 shadow-2xs"
+              aria-live="polite"
+              title={`${pendingCount} offline operations queued — will sync when connection returns`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+              <span>
+                {pendingCount} {pendingCount === 1 ? 'change' : 'changes'} pending
+              </span>
+            </div>
+          )}
 
           <Link
             to="/"
