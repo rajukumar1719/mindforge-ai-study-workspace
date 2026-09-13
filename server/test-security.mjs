@@ -720,7 +720,12 @@ async function runSecurityTests() {
   console.log(`===========================================================\n`);
 }
 
-runSecurityTests().catch((err) => {
-  console.error('\n❌ Security Test Suite Failed:', err);
-  process.exit(1);
-});
+runSecurityTests()
+  .then(() => {
+    socketRateLimiter.destroy();
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('\n❌ Security Test Suite Failed:', err);
+    process.exit(1);
+  });

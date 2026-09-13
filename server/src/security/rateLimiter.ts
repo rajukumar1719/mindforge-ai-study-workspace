@@ -24,10 +24,10 @@ const RATE_LIMIT_CONFIGS: Record<RateLimitedEvent, TokenBucketConfig> = {
     capacity: 60,
     refillRatePerSec: 60,
   },
-  // Operations (draw, erase, undo, redo): accommodates rapid replay (30/sec).
+  // Operations (draw, erase, undo, redo): capacity 120 accommodates burst replays and duplicate checks (60/sec refill).
   operation: {
-    capacity: 30,
-    refillRatePerSec: 30,
+    capacity: 120,
+    refillRatePerSec: 60,
   },
   // Room joins: prevents rapid-fire room allocation abuse (5 joins burst, 1/sec refill).
   joinRoom: {
@@ -50,6 +50,9 @@ export class SocketRateLimiter {
     this.cleanupInterval = setInterval(() => {
       this.pruneStaleStates();
     }, 60000);
+    if (this.cleanupInterval.unref) {
+      this.cleanupInterval.unref();
+    }
   }
 
   /**
