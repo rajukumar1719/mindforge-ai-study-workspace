@@ -348,11 +348,26 @@ export const RoomPage: React.FC = () => {
       {/* Drawing Canvas Area */}
       <main className="relative flex-1 w-full h-full flex flex-col overflow-hidden">
         <Canvas
-          ref={canvasElementRef}
+          ref={canvasRef}
           userId={displayName}
           settings={settings}
           strokes={strokes}
           onOperation={handleOperation}
+          onRemoteStrokeComplete={(stroke) => {
+            setStrokes((prev) => {
+              if (prev.some((s) => s.id === stroke.id)) return prev;
+              return [...prev, stroke];
+            });
+          }}
+          onLocalDrawStart={(data) => clientRef.current?.sendDrawStart(data)}
+          onLocalDrawMove={(strokeId, point) => clientRef.current?.queueStrokePoint(strokeId, point)}
+          onLocalDrawEnd={(strokeId) => clientRef.current?.sendDrawEnd(strokeId)}
+          onLocalErase={(strokeIds) => {
+            if (strokeIds.length > 0) {
+              const operationId = `op_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+              clientRef.current?.sendEraseStrokes({ operationId, strokeIds });
+            }
+          }}
         />
 
         {/* Floating Toolbar with Full Toolset */}
