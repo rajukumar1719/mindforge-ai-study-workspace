@@ -14,7 +14,7 @@ SyncDraw is designed as a high-performance, real-time collaborative whiteboard p
 
 SyncDraw is currently in active stage-by-stage development.
 
-### Implemented Features (Sections 1 – 7)
+### Implemented Features (Sections 1 – 8)
 - **Full-Stack TypeScript Architecture**: Monorepo structure using npm workspaces (`client/` and `server/`), strict TypeScript, and ESLint.
 - **Backend Infrastructure**: Node.js + Express REST gateway with `/health` monitoring, CORS handling, and graceful shutdown.
 - **Product Landing Page**: Responsive hero, brand wordmark, capabilities preview, and static architectural illustration.
@@ -55,6 +55,13 @@ SyncDraw is currently in active stage-by-stage development.
   - **Inactivity Staleness Fading**: Cursors automatically fade to zero opacity after 6 seconds of inactivity, while maintaining active room presence.
   - **Ghost Cursor Cleanup**: Instant cursor element removal and timer teardown on user disconnect (`USER_LEFT`) and room exit.
   - **Polished Presence Roster**: Avatar circles render the user's uppercase initials against their server-assigned color with an active green connection dot and local `(You)` badge.
+- **Collaborative Undo/Redo & Operation History (Section 8)**:
+  - **Author-Scoped Undo/Redo**: Collaborators can undo and redo their own operations without removing another collaborator's work.
+  - **Non-Destructive Operation Log**: Canvas mutations are recorded as immutable operations (`add-stroke`, `erase-strokes`, `clear-canvas`, `undo`, `redo`). Undoing an operation toggles its active state (`active: false`) rather than physically removing it from the log.
+  - **Collaborative Clear Canvas**: Clear is a synchronized, reversible operation. Undoing clear restores preceding strokes while preserving subsequent drawings.
+  - **Deterministic Canvas Reconstruction**: Replays active operations in chronological order on-demand, guaranteeing visual consistency across all connected clients with zero bitmap snapshots.
+  - **Server-Authoritative Validation**: Validates operation payloads, enforces authoritative socket identity, rejects cross-author mutations, and prevents duplicates via `operationId` sets.
+  - **Comprehensive State Hydration**: `SYNC_STATE` transmits both compiled strokes and canonical operation logs to newly joined and reconnected peers.
 
 ---
 
@@ -62,7 +69,6 @@ SyncDraw is currently in active stage-by-stage development.
 
 The following features are planned for upcoming development sections:
 
-- **Collaborative State History** *(Planned)*: Synchronized undo/redo trees, conflict resolution, and deterministic canvas convergence.
 - **Geometric Shapes & Annotations** *(Planned)*: Rectangle, ellipse, arrow, and text annotation tools.
 - **Room State Persistence** *(Planned)*: Server-side room snapshot storage and historical action replay for late-joining clients.
 - **Offline Resilience & Operation Queue** *(Planned)*: Reconnection queue buffering drawing actions during network drops.
@@ -165,6 +171,9 @@ npm run test:drawing -w server
 
 # Run automated live cursor synchronization test suite (7 test cases)
 npm run test:cursor -w server
+
+# Run automated collaborative history & undo/redo test suite (16 test cases)
+npm run test:history -w server
 ```
 
 ---
