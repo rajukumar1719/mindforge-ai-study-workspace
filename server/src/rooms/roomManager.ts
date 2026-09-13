@@ -1,4 +1,4 @@
-import type { Room, Collaborator } from '../types/collaboration.js';
+import type { Room, Collaborator, Stroke, Point } from '../types/collaboration.js';
 import { createRoomState } from './roomState.js';
 
 /**
