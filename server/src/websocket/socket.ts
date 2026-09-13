@@ -15,6 +15,7 @@ import {
   validateDrawEndPayload,
   validateEraseStrokesPayload,
   validateCursorMovePayload,
+  validateOperationApplyPayload,
 } from '../utils/validation.js';
 import { assignCollaboratorColor } from '../utils/colors.js';
 
@@ -89,8 +90,10 @@ export function initSocketServer(
 
       // Synchronize existing finalized room drawing state with the new participant
       const existingStrokes = roomManager.getStrokes(roomId);
+      const existingOperations = roomManager.getOperations(roomId);
       socket.emit('SYNC_STATE', {
         strokes: existingStrokes,
+        operations: existingOperations,
       });
 
       // Notify other participants in the same room
@@ -211,7 +214,7 @@ export function initSocketServer(
       const { operationId, strokeIds } = validation.data;
 
       // Apply stroke deletion to server room state
-      const erased = roomManager.eraseStrokes(roomId, strokeIds);
+      const erased = roomManager.eraseStrokes(roomId, strokeIds, operationId, user.id);
       if (erased.length > 0) {
         socket.to(roomId).emit('ERASE_STROKES', {
           operationId,
@@ -245,6 +248,47 @@ export function initSocketServer(
         x: validation.data.x,
         y: validation.data.y,
         timestamp: Date.now(),
+      });
+    });
+
+    // 7. OPERATION_APPLY Handler (Author-Scoped Collaborative Operations)
+    socket.on('OPERATION_APPLY', (rawPayload) => {
+      const roomId = socket.data.roomId;
+      const user = socket.data.user;
+
+      if (!roomId || !user) {
+        socket.emit('ERROR', {
+          code: 'UNAUTHORIZED_ACTION',
+          message: 'Must join a room before submitting operations.',
+        });
+        return;
+      }
+
+      const validation = validateOperationApplyPayload(rawPayload);
+      if (!validation.valid || !validation.data) {
+        socket.emit('ERROR', validation.error || {
+          code: 'INVALID_OPERATION_PAYLOAD',
+          message: 'Invalid operation payload.',
+        });
+        return;
+      }
+
+      const operation = validation.data.operation;
+      // Server authority: enforce authoritative user ID from active socket
+      operation.userId = user.id;
+
+      const result = roomManager.applyCollaborativeOperation(roomId, operation);
+      if (!result.success) {
+        socket.emit('ERROR', result.error || {
+          code: 'OPERATION_REJECTED',
+          message: 'Operation could not be applied.',
+        });
+        return;
+      }
+
+      // Broadcast the accepted canonical operation to all room participants
+      io.to(roomId).emit('OPERATION_APPLIED', {
+        operation,
       });
     });
 
