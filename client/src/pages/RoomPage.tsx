@@ -12,8 +12,10 @@ import {
   exportCanvasToPng,
   TOOL_DEFAULT_WIDTHS,
 } from '../canvas';
+import { createCollaborationClient } from '../collaboration';
 import type { UserSession } from '../types';
 import type { Stroke, CanvasSettings, CanvasOperation } from '../canvas';
+import type { Collaborator, ConnectionStatus } from '../collaboration';
 
 export const RoomPage: React.FC = () => {
   const { roomId: rawRoomId } = useParams<{ roomId: string }>();
@@ -43,8 +45,46 @@ export const RoomPage: React.FC = () => {
     width: 4,
   });
 
+  // Real-Time Collaboration & Presence State
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | undefined>(undefined);
+
   const displayName = session?.displayName || '';
   const hasSession = Boolean(session && session.displayName);
+
+  // Establish real-time connection lifecycle strictly when user is in the room
+  useEffect(() => {
+    if (!hasSession || !isRoomValid || !roomId || !displayName) return;
+
+    const client = createCollaborationClient({
+      roomId,
+      displayName,
+      onStatusChange: (status) => {
+        setConnectionStatus(status);
+      },
+      onRoomJoined: (data) => {
+        setCurrentUserId(data.user.id);
+        setCollaborators(data.collaborators);
+      },
+      onUserJoined: (data) => {
+        setCollaborators((prev) => {
+          if (prev.some((c) => c.id === data.user.id)) return prev;
+          return [...prev, data.user];
+        });
+      },
+      onUserLeft: (data) => {
+        setCollaborators((prev) => prev.filter((c) => c.id !== data.userId));
+      },
+      onError: (err) => {
+        console.error('[Room Collaboration Error]:', err.code, err.message);
+      },
+    });
+
+    return () => {
+      client.disconnect();
+    };
+  }, [hasSession, isRoomValid, roomId, displayName]);
 
   // Handles new drawing and erasing operations
   const handleOperation = useCallback((op: CanvasOperation) => {
@@ -269,11 +309,17 @@ export const RoomPage: React.FC = () => {
     );
   }
 
-  // Active Interactive Drawing Workspace
+  // Active Interactive Drawing Workspace with Real-Time Presence
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100">
-      {/* Room Header */}
-      <RoomHeader roomId={roomId} displayName={displayName} />
+      {/* Room Header with Real Presence and Live Socket Connection Status */}
+      <RoomHeader
+        roomId={roomId}
+        displayName={displayName}
+        connectionStatus={connectionStatus}
+        collaborators={collaborators}
+        currentUserId={currentUserId}
+      />
 
       {/* Drawing Canvas Area */}
       <main className="relative flex-1 w-full h-full flex flex-col overflow-hidden">

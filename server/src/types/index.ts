@@ -10,3 +10,6 @@ export interface ServerConfig {
   clientUrl: string;
   nodeEnv: string;
 }
+
+export * from './collaboration.js';
+

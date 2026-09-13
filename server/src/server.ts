@@ -3,6 +3,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import dotenv from 'dotenv';
 import type { HealthResponse, ServerConfig } from './types/index.js';
+import { initSocketServer } from './websocket/socket.js';
 
 dotenv.config();
 
@@ -51,8 +52,9 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
-// HTTP Server (prepared for future WebSocket integration)
+// HTTP Server & WebSocket Server
 const httpServer = http.createServer(app);
+const io = initSocketServer(httpServer, config.clientUrl);
 
 const server = httpServer.listen(config.port, () => {
   console.log(`[SyncDraw Server] Running in ${config.nodeEnv} mode`);
@@ -72,4 +74,4 @@ const handleShutdown = (signal: string) => {
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 
-export { app, httpServer };
+export { app, httpServer, io };
