@@ -14,6 +14,7 @@ import {
   validateDrawUpdatePayload,
   validateDrawEndPayload,
   validateEraseStrokesPayload,
+  validateCursorMovePayload,
 } from '../utils/validation.js';
 import { assignCollaboratorColor } from '../utils/colors.js';
 
@@ -220,7 +221,34 @@ export function initSocketServer(
       }
     });
 
-    // 6. Disconnect Handler
+    // 6. CURSOR_MOVE Handler (Collaborative Live Cursors)
+    socket.on('CURSOR_MOVE', (rawPayload) => {
+      const roomId = socket.data.roomId;
+      const user = socket.data.user;
+
+      if (!roomId || !user) {
+        socket.emit('ERROR', {
+          code: 'UNAUTHORIZED_ACTION',
+          message: 'Must join a room before sending cursor updates.',
+        });
+        return;
+      }
+
+      const validation = validateCursorMovePayload(rawPayload);
+      if (!validation.valid || !validation.data) {
+        return; // Drop malformed cursor coordinates safely without crashing
+      }
+
+      // Broadcast exclusively to peers in the same room (zero echo, zero leak)
+      socket.to(roomId).emit('CURSOR_UPDATE', {
+        userId: user.id,
+        x: validation.data.x,
+        y: validation.data.y,
+        timestamp: Date.now(),
+      });
+    });
+
+    // 7. Disconnect Handler
     socket.on('disconnect', (reason) => {
       const roomId = socket.data.roomId;
       const user = socket.data.user;
