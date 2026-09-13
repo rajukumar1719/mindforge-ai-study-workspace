@@ -256,8 +256,116 @@ async function runDrawingSyncTests() {
   }
   console.log(`  -> PASS: Test 8: Server safely caught invalid payload with code "${validationError.code}".`);
 
-  // Clean up
+  // Test 9: Simultaneous drawing
+  console.log('\n[Test 9] Simultaneous drawing: Alice and Bob draw concurrently...');
+  let aliceGotBobSimul = false;
+  let bobGotAliceSimul = false;
+
+  clientA.on('DRAW_END', (data) => {
+    if (data.strokeId === 'stroke_bob_simul') aliceGotBobSimul = true;
+  });
+  clientB.on('DRAW_END', (data) => {
+    if (data.strokeId === 'stroke_alice_simul') bobGotAliceSimul = true;
+  });
+
+  // Concurrently emit strokes
+  await Promise.all([
+    (async () => {
+      clientA.emit('DRAW_START', {
+        strokeId: 'stroke_alice_simul',
+        tool: 'pen',
+        color: '#ff0000',
+        width: 4,
+        point: { x: 50, y: 50 },
+      });
+      clientA.emit('DRAW_UPDATE', {
+        strokeId: 'stroke_alice_simul',
+        points: [{ x: 60, y: 60 }, { x: 70, y: 70 }],
+      });
+      clientA.emit('DRAW_END', { strokeId: 'stroke_alice_simul' });
+    })(),
+    (async () => {
+      clientB.emit('DRAW_START', {
+        strokeId: 'stroke_bob_simul',
+        tool: 'pen',
+        color: '#0000ff',
+        width: 4,
+        point: { x: 150, y: 150 },
+      });
+      clientB.emit('DRAW_UPDATE', {
+        strokeId: 'stroke_bob_simul',
+        points: [{ x: 160, y: 160 }, { x: 170, y: 170 }],
+      });
+      clientB.emit('DRAW_END', { strokeId: 'stroke_bob_simul' });
+    })(),
+  ]);
+  await wait(200);
+
+  if (!aliceGotBobSimul || !bobGotAliceSimul) {
+    throw new Error(`Test 9 Failed: Simultaneous drawing failed. Alice got Bob: ${aliceGotBobSimul}, Bob got Alice: ${bobGotAliceSimul}`);
+  }
+  console.log('  -> PASS: Test 9: Simultaneous drawing between Alice and Bob verified.');
+
+  // Test 10: Reconnection and SYNC_STATE retrieval
+  console.log('\n[Test 10] Client reconnects to room and verifies SYNC_STATE...');
   clientA.disconnect();
+  await wait(100);
+
+  const clientAReconnect = io(SERVER_URL, { transports: ['websocket'] });
+  await new Promise((res) => clientAReconnect.on('connect', res));
+
+  let reconnectedSyncStrokes = null;
+  clientAReconnect.on('SYNC_STATE', (data) => {
+    reconnectedSyncStrokes = data.strokes;
+  });
+
+  clientAReconnect.emit('JOIN_ROOM', { roomId: 'ROOM_TEST', displayName: 'Alice' });
+  await wait(300);
+
+  if (!reconnectedSyncStrokes || reconnectedSyncStrokes.length < 3) {
+    throw new Error(`Test 10 Failed: Reconnecting client did not receive expected strokes in SYNC_STATE. Got ${reconnectedSyncStrokes?.length}`);
+  }
+  console.log(`  -> PASS: Test 10: Reconnected client received ${reconnectedSyncStrokes.length} canonical strokes via SYNC_STATE.`);
+
+  // Test 11: Rapid Drawing & Large Batch
+  console.log('\n[Test 11] Rapid drawing: 100 points emitted in batched updates...');
+  let rapidPointsReceived = 0;
+  clientAReconnect.on('DRAW_UPDATE', (data) => {
+    if (data.strokeId === 'stroke_rapid_1') {
+      rapidPointsReceived += data.points.length;
+    }
+  });
+
+  const rapidStrokeId = 'stroke_rapid_1';
+  clientB.emit('DRAW_START', {
+    strokeId: rapidStrokeId,
+    tool: 'pen',
+    color: '#8b5cf6',
+    width: 3,
+    point: { x: 0, y: 0 },
+  });
+
+  // Send 5 batches of 20 points
+  for (let b = 0; b < 5; b++) {
+    const pts = [];
+    for (let i = 0; i < 20; i++) {
+      pts.push({ x: b * 20 + i, y: b * 20 + i });
+    }
+    clientB.emit('DRAW_UPDATE', {
+      strokeId: rapidStrokeId,
+      points: pts,
+    });
+  }
+  clientB.emit('DRAW_END', { strokeId: rapidStrokeId });
+  await wait(250);
+
+  if (rapidPointsReceived !== 100) {
+    throw new Error(`Test 11 Failed: Expected 100 rapid points, received ${rapidPointsReceived}`);
+  }
+  console.log(`  -> PASS: Test 11: Rapid drawing of ${rapidPointsReceived} points across multiple batches verified.`);
+
+  // Clean up
+  clientAReconnect.disconnect();
   clientB.disconnect();
   clientC.disconnect();
   clientDave.disconnect();
