@@ -11,3 +11,6 @@ export interface HealthData {
   timestamp: string;
   uptime: number;
 }
+
+export * from './room';
+
