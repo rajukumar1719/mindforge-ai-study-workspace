@@ -14,7 +14,7 @@ SyncDraw is designed as a high-performance, real-time collaborative whiteboard p
 
 SyncDraw is currently in active stage-by-stage development.
 
-### Implemented Features (Sections 1 – 5)
+### Implemented Features (Sections 1 – 6)
 - **Full-Stack TypeScript Architecture**: Monorepo structure using npm workspaces (`client/` and `server/`), strict TypeScript, and ESLint.
 - **Backend Infrastructure**: Node.js + Express REST gateway with `/health` monitoring, CORS handling, and graceful shutdown.
 - **Product Landing Page**: Responsive hero, brand wordmark, capabilities preview, and static architectural illustration.
@@ -32,15 +32,22 @@ SyncDraw is currently in active stage-by-stage development.
   - Blob-based PNG export (`syncdraw-{roomId}.png`).
   - Keyboard shortcuts (`P`, `H`, `E`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z`, `Escape`).
 - **Real-Time Backend & WebSocket Foundation (Section 5)**:
-  - **Socket.IO Real-Time Gateway**: Dedicated bidirectional WebSocket server attached to HTTP server.
-  - **In-Memory RoomManager**: Authoritative room lifecycle, member tracking, and automatic cleanup of empty rooms.
-  - **Server-Authoritative Identity**: Server generates socket IDs and assigns distinct collaborator colors (`#4f46e5`, `#059669`, `#d97706`, `#e11d48`, etc.) from an accessible palette.
-  - **Strict Room Isolation**: Socket.IO room namespaces prevent cross-room message leakage.
-  - **Typed Protocol**: Structured `JOIN_ROOM`, `ROOM_JOINED`, `USER_JOINED`, `USER_LEFT`, and `ERROR` events with runtime shape validation.
-  - **Live User Presence**: Header displays dynamic collaborator count and popover roster with color indicators and "(You)" tag.
-  - **Real Connection Status**: Dynamic badge displaying `Connected`, `Connecting...`, `Reconnecting...`, and `Disconnected`.
-  - **Reconnection Handling**: Automatic rejoining on reconnect without duplicate presence entries.
-  - *Note*: Canvas drawing operates locally; drawing synchronization will follow in Section 6.
+  - Dedicated bidirectional Socket.IO gateway with isolated room namespaces.
+  - In-memory `RoomManager` with automatic resource cleanup when rooms empty.
+  - Server-authoritative collaborator identities and accessible palette colors.
+  - Live presence count and collaborator avatar stack with tooltip badges.
+  - Dynamic connection status (`Connecting...`, `Connected`, `Reconnecting...`, `Disconnected`).
+  - Reconnection resilience with duplicate presence prevention.
+- **Real-Time Drawing Synchronization (Section 6)**:
+  - **Structured Stroke Synchronization**: Synchronizes lightweight vector drawing operations (`DRAW_START`, `DRAW_UPDATE`, `DRAW_END`, `ERASE_STROKES`) rather than heavy canvas screenshots or bitmap diffs.
+  - **Local-First Zero-Latency Rendering**: Local strokes render immediately at native screen refresh rates (60–120Hz); network transmission is batched and asynchronous.
+  - **Incremental Remote Rendering**: Remote points render incrementally on the 2D canvas context via Bézier segments without full-canvas redraws or React state churn per point.
+  - **Multi-Tool Collaboration**: Synchronizes Pen, Highlighter (with alpha transparency), and Stroke-Level Eraser across concurrent users.
+  - **Simultaneous Multi-User Drawing**: Multiple users can draw at the exact same moment without stroke collision or overwriting.
+  - **Batched Network Dispatch & Point Reduction**: Point updates are buffered and flushed in $\sim 25\text{ms}$ windows ($\sim 40\text{ updates/sec}$) with Euclidean distance filtering to prevent WebSocket flooding.
+  - **Late-Join Initial State Hydration (`SYNC_STATE`)**: Late-joining participants immediately receive the room's canonical strokes on join.
+  - **Strict Room Isolation**: Drawing events are routed exclusively to peers in the same room.
+  - **Defensive Validation & Ghost Stroke Elimination**: Rigorous validation on stroke IDs, tools, colors, and coordinates; incomplete strokes from disconnected clients are cleanly finalized and purged.
 
 ---
 
@@ -48,7 +55,6 @@ SyncDraw is currently in active stage-by-stage development.
 
 The following features are planned for upcoming development sections:
 
-- **Real-Time Drawing Synchronization** *(Planned — Section 6)*: Low-latency stroke delta broadcasting (`DRAW_START`, `DRAW_UPDATE`, `DRAW_END`) and optimistic local rendering.
 - **Live Collaborative Cursors** *(Planned)*: Synchronized multiplayer mouse cursors displaying teammate names and distinct user color tags.
 - **Collaborative State History** *(Planned)*: Synchronized undo/redo trees, conflict resolution, and deterministic canvas convergence.
 - **Geometric Shapes & Annotations** *(Planned)*: Rectangle, ellipse, arrow, and text annotation tools.
