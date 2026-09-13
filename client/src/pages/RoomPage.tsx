@@ -1,17 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { RoomHeader } from '../components/RoomHeader';
 import { Canvas } from '../components/canvas/Canvas';
 import { Toolbar } from '../components/canvas/Toolbar';
+import { ClearConfirmDialog } from '../components/canvas/ClearConfirmDialog';
 import { normalizeRoomId, isValidRoomId } from '../utils/roomId';
 import { getUserSession, setUserSession } from '../utils/storage';
+import {
+  applyOperation,
+  revertOperation,
+  exportCanvasToPng,
+  TOOL_DEFAULT_WIDTHS,
+} from '../canvas';
 import type { UserSession } from '../types';
-import type { Stroke, CanvasSettings } from '../canvas';
+import type { Stroke, CanvasSettings, CanvasOperation } from '../canvas';
 
 export const RoomPage: React.FC = () => {
   const { roomId: rawRoomId } = useParams<{ roomId: string }>();
   const roomId = rawRoomId ? normalizeRoomId(rawRoomId) : '';
   const isRoomValid = isValidRoomId(roomId);
+
+  const canvasElementRef = useRef<HTMLCanvasElement>(null);
 
   const [session, setSession] = useState<UserSession | null>(() => getUserSession());
   const [directJoinName, setDirectJoinName] = useState<string>('');
@@ -20,7 +29,14 @@ export const RoomPage: React.FC = () => {
   // Drawing state: Canonical collection of finalized strokes
   const [strokes, setStrokes] = useState<Stroke[]>([]);
 
-  // Canvas settings
+  // Logical undo and redo operation history stacks
+  const [undoStack, setUndoStack] = useState<CanvasOperation[]>([]);
+  const [redoStack, setRedoStack] = useState<CanvasOperation[]>([]);
+
+  // Clear confirmation modal state
+  const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
+
+  // Canvas tool and brush settings
   const [settings, setSettings] = useState<CanvasSettings>({
     tool: 'pen',
     color: '#111111',
@@ -29,6 +45,116 @@ export const RoomPage: React.FC = () => {
 
   const displayName = session?.displayName || '';
   const hasSession = Boolean(session && session.displayName);
+
+  // Handles new drawing and erasing operations
+  const handleOperation = useCallback((op: CanvasOperation) => {
+    setStrokes((prev) => applyOperation(prev, op));
+    setUndoStack((prev) => [...prev, op]);
+    setRedoStack([]); // New operation clears redo branch
+  }, []);
+
+  // Undo recent logical operation
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const lastOp = undoStack[undoStack.length - 1]!;
+    setUndoStack((prev) => prev.slice(0, prev.length - 1));
+    setRedoStack((prev) => [...prev, lastOp]);
+    setStrokes((prev) => revertOperation(prev, lastOp));
+  }, [undoStack]);
+
+  // Redo reverted operation
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const nextOp = redoStack[redoStack.length - 1]!;
+    setRedoStack((prev) => prev.slice(0, prev.length - 1));
+    setUndoStack((prev) => [...prev, nextOp]);
+    setStrokes((prev) => applyOperation(prev, nextOp));
+  }, [redoStack]);
+
+  // Confirm clear canvas
+  const handleConfirmClear = () => {
+    setIsClearDialogOpen(false);
+    if (strokes.length === 0) return;
+
+    const clearOp: CanvasOperation = {
+      type: 'clear-canvas',
+      strokes: [...strokes],
+    };
+    handleOperation(clearOp);
+  };
+
+  // Export PNG
+  const handleExportPng = async () => {
+    if (!canvasElementRef.current) return;
+    const filename = `syncdraw-${roomId || 'canvas'}.png`;
+    const success = await exportCanvasToPng(canvasElementRef.current, filename);
+    if (!success) {
+      alert('Unable to export the canvas. Please try again.');
+    }
+  };
+
+  // Global Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore shortcuts if the user is typing in an input, textarea, or contenteditable
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const isCtrlOrCmd = isMac ? e.metaKey : e.ctrlKey;
+
+      // Undo: Ctrl+Z / Cmd+Z (without Shift)
+      if (isCtrlOrCmd && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      // Redo: Ctrl+Shift+Z / Cmd+Shift+Z or Ctrl+Y
+      if (
+        (isCtrlOrCmd && e.shiftKey && e.key.toLowerCase() === 'z') ||
+        (!isMac && isCtrlOrCmd && e.key.toLowerCase() === 'y')
+      ) {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+
+      // Tool shortcuts (single keys, no modifiers)
+      if (!isCtrlOrCmd && !e.altKey) {
+        if (e.key.toLowerCase() === 'p') {
+          e.preventDefault();
+          setSettings((prev) => ({ ...prev, tool: 'pen', width: TOOL_DEFAULT_WIDTHS.pen }));
+        } else if (e.key.toLowerCase() === 'h') {
+          e.preventDefault();
+          setSettings((prev) => ({
+            ...prev,
+            tool: 'highlighter',
+            width: Math.max(14, prev.width),
+          }));
+        } else if (e.key.toLowerCase() === 'e') {
+          e.preventDefault();
+          setSettings((prev) => ({
+            ...prev,
+            tool: 'eraser',
+            width: Math.max(14, prev.width),
+          }));
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleUndo, handleRedo]);
 
   const handleDirectJoinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,10 +175,6 @@ export const RoomPage: React.FC = () => {
     setJoinError(null);
     setUserSession(trimmed);
     setSession({ displayName: trimmed });
-  };
-
-  const handleStrokeComplete = (newStroke: Stroke) => {
-    setStrokes((prev) => [...prev, newStroke]);
   };
 
   // Malformed Room ID handling
@@ -156,16 +278,30 @@ export const RoomPage: React.FC = () => {
       {/* Drawing Canvas Area */}
       <main className="relative flex-1 w-full h-full flex flex-col overflow-hidden">
         <Canvas
+          ref={canvasElementRef}
           userId={displayName}
           settings={settings}
           strokes={strokes}
-          onStrokeComplete={handleStrokeComplete}
+          onOperation={handleOperation}
         />
 
-        {/* Floating Toolbar */}
+        {/* Floating Toolbar with Full Toolset */}
         <Toolbar
           settings={settings}
           onSettingsChange={setSettings}
+          canUndo={undoStack.length > 0}
+          canRedo={redoStack.length > 0}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onClearClick={() => setIsClearDialogOpen(true)}
+          onExportClick={handleExportPng}
+        />
+
+        {/* Clear Confirmation Dialog */}
+        <ClearConfirmDialog
+          isOpen={isClearDialogOpen}
+          onConfirm={handleConfirmClear}
+          onCancel={() => setIsClearDialogOpen(false)}
         />
       </main>
     </div>
