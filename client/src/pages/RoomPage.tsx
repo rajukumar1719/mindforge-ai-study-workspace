@@ -40,9 +40,9 @@ export const RoomPage: React.FC = () => {
   // Drawing state: Canonical collection of finalized strokes
   const [strokes, setStrokes] = useState<Stroke[]>([]);
 
-  // Logical undo and redo operation history stacks
-  const [undoStack, setUndoStack] = useState<CanvasOperation[]>([]);
-  const [redoStack, setRedoStack] = useState<CanvasOperation[]>([]);
+  // Collaborative Operation History Log
+  const [operations, setOperations] = useState<OperationRecord[]>([]);
+  const appliedOperationIds = useRef<Set<string>>(new Set());
 
   // Clear confirmation modal state
   const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
@@ -61,6 +61,10 @@ export const RoomPage: React.FC = () => {
 
   const displayName = session?.displayName || '';
   const hasSession = Boolean(session && session.displayName);
+
+  // Author-scoped undo/redo eligibility for the local participant
+  const canUndo = Boolean(currentUserId && findLatestUndoableOperation(operations, currentUserId));
+  const canRedo = Boolean(currentUserId && findLatestRedoableOperation(operations, currentUserId));
 
   // Establish real-time connection lifecycle strictly when user is in the room
   useEffect(() => {
@@ -92,8 +96,48 @@ export const RoomPage: React.FC = () => {
         cursorOverlayRef.current?.updateRemoteCursor(data.userId, data.x, data.y);
       },
       onSyncState: (data) => {
-        // Hydrate canvas with room's authoritative finalized strokes
-        setStrokes(data.strokes);
+        // Hydrate canvas and operation log with room's authoritative state
+        if (data.operations && data.operations.length > 0) {
+          for (const rec of data.operations) {
+            appliedOperationIds.current.add(rec.operation.operationId);
+          }
+          setOperations(data.operations);
+          setStrokes(reconstructCanvasState(data.operations));
+        } else {
+          setStrokes(data.strokes);
+        }
+      },
+      onOperationApplied: (data) => {
+        const op = data.operation;
+        if (appliedOperationIds.current.has(op.operationId)) {
+          setOperations((prev) => {
+            if (prev.some((r) => r.operation.operationId === op.operationId)) return prev;
+            return [...prev, { operation: op, active: true }];
+          });
+          return;
+        }
+
+        appliedOperationIds.current.add(op.operationId);
+
+        setOperations((prev) => {
+          let nextOps: OperationRecord[];
+          if (op.type === 'undo') {
+            nextOps = prev.map((r) =>
+              r.operation.operationId === op.targetOperationId ? { ...r, active: false } : r
+            );
+            nextOps.push({ operation: op, active: true });
+          } else if (op.type === 'redo') {
+            nextOps = prev.map((r) =>
+              r.operation.operationId === op.targetOperationId ? { ...r, active: true } : r
+            );
+            nextOps.push({ operation: op, active: true });
+          } else {
+            nextOps = [...prev, { operation: op, active: true }];
+          }
+
+          setStrokes(reconstructCanvasState(nextOps));
+          return nextOps;
+        });
       },
       onDrawStart: (data) => {
         canvasRef.current?.handleRemoteDrawStart(data);
@@ -121,41 +165,111 @@ export const RoomPage: React.FC = () => {
     };
   }, [hasSession, isRoomValid, roomId, displayName]);
 
-  // Handles new drawing and erasing operations
-  const handleOperation = useCallback((op: CanvasOperation) => {
-    setStrokes((prev) => applyOperation(prev, op));
-    setUndoStack((prev) => [...prev, op]);
-    setRedoStack([]); // New operation clears redo branch
-  }, []);
+  // Handles finalized local drawing strokes
+  const handleOperation = useCallback(
+    (op: CanvasOperation) => {
+      if (op.type === 'add-stroke') {
+        const stroke = op.stroke;
+        const opId = `op_${stroke.id}`;
+        appliedOperationIds.current.add(opId);
 
-  // Undo recent logical operation
+        const colOp: CollaborativeOperation = {
+          operationId: opId,
+          type: 'add-stroke',
+          userId: currentUserId || displayName,
+          stroke,
+          timestamp: stroke.createdAt || Date.now(),
+        };
+
+        setOperations((prev) => {
+          if (prev.some((r) => r.operation.operationId === opId)) return prev;
+          return [...prev, { operation: colOp, active: true }];
+        });
+
+        clientRef.current?.sendOperation(colOp);
+      }
+    },
+    [currentUserId, displayName]
+  );
+
+  // Author-scoped Undo: Deactivates current user's latest active operation
   const handleUndo = useCallback(() => {
-    if (undoStack.length === 0) return;
-    const lastOp = undoStack[undoStack.length - 1]!;
-    setUndoStack((prev) => prev.slice(0, prev.length - 1));
-    setRedoStack((prev) => [...prev, lastOp]);
-    setStrokes((prev) => revertOperation(prev, lastOp));
-  }, [undoStack]);
+    if (!currentUserId) return;
+    const targetOp = findLatestUndoableOperation(operations, currentUserId);
+    if (!targetOp) return;
 
-  // Redo reverted operation
+    const undoOpId = `op_undo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const undoOperation: CollaborativeOperation = {
+      operationId: undoOpId,
+      type: 'undo',
+      userId: currentUserId,
+      targetOperationId: targetOp.operationId,
+      timestamp: Date.now(),
+    };
+
+    appliedOperationIds.current.add(undoOpId);
+
+    setOperations((prev) => {
+      const updated = prev.map((r) =>
+        r.operation.operationId === targetOp.operationId ? { ...r, active: false } : r
+      );
+      const nextOps = [...updated, { operation: undoOperation, active: true }];
+      setStrokes(reconstructCanvasState(nextOps));
+      return nextOps;
+    });
+
+    clientRef.current?.sendOperation(undoOperation);
+  }, [currentUserId, operations]);
+
+  // Author-scoped Redo: Reactivates current user's most recently undone operation
   const handleRedo = useCallback(() => {
-    if (redoStack.length === 0) return;
-    const nextOp = redoStack[redoStack.length - 1]!;
-    setRedoStack((prev) => prev.slice(0, prev.length - 1));
-    setUndoStack((prev) => [...prev, nextOp]);
-    setStrokes((prev) => applyOperation(prev, nextOp));
-  }, [redoStack]);
+    if (!currentUserId) return;
+    const targetOp = findLatestRedoableOperation(operations, currentUserId);
+    if (!targetOp) return;
 
-  // Confirm clear canvas
+    const redoOpId = `op_redo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const redoOperation: CollaborativeOperation = {
+      operationId: redoOpId,
+      type: 'redo',
+      userId: currentUserId,
+      targetOperationId: targetOp.operationId,
+      timestamp: Date.now(),
+    };
+
+    appliedOperationIds.current.add(redoOpId);
+
+    setOperations((prev) => {
+      const updated = prev.map((r) =>
+        r.operation.operationId === targetOp.operationId ? { ...r, active: true } : r
+      );
+      const nextOps = [...updated, { operation: redoOperation, active: true }];
+      setStrokes(reconstructCanvasState(nextOps));
+      return nextOps;
+    });
+
+    clientRef.current?.sendOperation(redoOperation);
+  }, [currentUserId, operations]);
+
+  // Collaborative Clear Canvas: Emits clear-canvas operation preserving history for undo
   const handleConfirmClear = () => {
     setIsClearDialogOpen(false);
-    if (strokes.length === 0) return;
-
-    const clearOp: CanvasOperation = {
+    const clearOpId = `op_clear_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const clearOperation: CollaborativeOperation = {
+      operationId: clearOpId,
       type: 'clear-canvas',
-      strokes: [...strokes],
+      userId: currentUserId || displayName,
+      timestamp: Date.now(),
     };
-    handleOperation(clearOp);
+
+    appliedOperationIds.current.add(clearOpId);
+
+    setOperations((prev) => {
+      const nextOps = [...prev, { operation: clearOperation, active: true }];
+      setStrokes(reconstructCanvasState(nextOps));
+      return nextOps;
+    });
+
+    clientRef.current?.sendOperation(clearOperation);
   };
 
   // Export PNG
@@ -366,6 +480,26 @@ export const RoomPage: React.FC = () => {
           strokes={strokes}
           onOperation={handleOperation}
           onRemoteStrokeComplete={(stroke) => {
+            const opId = `op_${stroke.id}`;
+            if (!appliedOperationIds.current.has(opId)) {
+              appliedOperationIds.current.add(opId);
+              setOperations((prev) => {
+                if (prev.some((r) => r.operation.operationId === opId)) return prev;
+                return [
+                  ...prev,
+                  {
+                    operation: {
+                      operationId: opId,
+                      type: 'add-stroke',
+                      userId: stroke.userId,
+                      stroke,
+                      timestamp: stroke.createdAt || Date.now(),
+                    },
+                    active: true,
+                  },
+                ];
+              });
+            }
             setStrokes((prev) => {
               if (prev.some((s) => s.id === stroke.id)) return prev;
               return [...prev, stroke];
@@ -376,7 +510,24 @@ export const RoomPage: React.FC = () => {
           onLocalDrawEnd={(strokeId) => clientRef.current?.sendDrawEnd(strokeId)}
           onLocalErase={(strokeIds) => {
             if (strokeIds.length > 0) {
-              const operationId = `op_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+              const operationId = `op_erase_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+              appliedOperationIds.current.add(operationId);
+
+              const colOp: CollaborativeOperation = {
+                operationId,
+                type: 'erase-strokes',
+                userId: currentUserId || displayName,
+                strokeIds,
+                timestamp: Date.now(),
+              };
+
+              setOperations((prev) => {
+                const nextOps = [...prev, { operation: colOp, active: true }];
+                setStrokes(reconstructCanvasState(nextOps));
+                return nextOps;
+              });
+
+              clientRef.current?.sendOperation(colOp);
               clientRef.current?.sendEraseStrokes({ operationId, strokeIds });
             }
           }}
@@ -394,8 +545,8 @@ export const RoomPage: React.FC = () => {
         <Toolbar
           settings={settings}
           onSettingsChange={setSettings}
-          canUndo={undoStack.length > 0}
-          canRedo={redoStack.length > 0}
+          canUndo={canUndo}
+          canRedo={canRedo}
           onUndo={handleUndo}
           onRedo={handleRedo}
           onClearClick={() => setIsClearDialogOpen(true)}
