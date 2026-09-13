@@ -4,6 +4,7 @@ import type {
   DrawUpdatePayload,
   DrawEndPayload,
   EraseStrokesPayload,
+  CursorMovePayload,
 } from '../types/collaboration.js';
 
 /**
@@ -318,6 +319,44 @@ export function validateEraseStrokesPayload(payload: unknown): ValidationResult<
     data: {
       operationId: raw['operationId'].trim(),
       strokeIds: strokeIds.map((id: string) => id.trim()),
+    },
+  };
+}
+
+/**
+ * Validates CURSOR_MOVE payload.
+ */
+export function validateCursorMovePayload(payload: unknown): ValidationResult<CursorMovePayload> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return {
+      valid: false,
+      error: { code: 'INVALID_PAYLOAD', message: 'CURSOR_MOVE payload must be an object.' },
+    };
+  }
+
+  const raw = payload as Record<string, unknown>;
+  const x = raw['x'];
+  const y = raw['y'];
+
+  if (typeof x !== 'number' || !Number.isFinite(x) || typeof y !== 'number' || !Number.isFinite(y)) {
+    return {
+      valid: false,
+      error: { code: 'INVALID_COORDINATES', message: 'Cursor coordinates must be finite numbers.' },
+    };
+  }
+
+  if (Math.abs(x) > 100000 || Math.abs(y) > 100000) {
+    return {
+      valid: false,
+      error: { code: 'COORDINATES_OUT_OF_BOUNDS', message: 'Cursor coordinates out of allowed bounds.' },
+    };
+  }
+
+  return {
+    valid: true,
+    data: {
+      x,
+      y,
     },
   };
 }
