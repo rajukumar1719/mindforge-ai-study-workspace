@@ -111,7 +111,6 @@ export const RoomPage: React.FC = () => {
 
     return () => {
       clientRef.current = null;
-      cursorOverlayRef.current?.clearAll();
       client.disconnect();
     };
   }, [hasSession, isRoomValid, roomId, displayName]);
