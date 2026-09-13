@@ -5,9 +5,16 @@ import type {
   ServerToClientEvents,
   SocketData,
   Collaborator,
+  Stroke,
 } from '../types/collaboration.js';
 import { roomManager } from '../rooms/roomManager.js';
-import { validateJoinRoomPayload } from '../utils/validation.js';
+import {
+  validateJoinRoomPayload,
+  validateDrawStartPayload,
+  validateDrawUpdatePayload,
+  validateDrawEndPayload,
+  validateEraseStrokesPayload,
+} from '../utils/validation.js';
 import { assignCollaboratorColor } from '../utils/colors.js';
 
 export function initSocketServer(
@@ -79,20 +86,154 @@ export function initSocketServer(
         collaborators: currentCollaborators,
       });
 
+      // Synchronize existing finalized room drawing state with the new participant
+      const existingStrokes = roomManager.getStrokes(roomId);
+      socket.emit('SYNC_STATE', {
+        strokes: existingStrokes,
+      });
+
       // Notify other participants in the same room
       socket.to(roomId).emit('USER_JOINED', {
         user: collaborator,
       });
 
-      console.log(`[WebSocket] ${displayName} (${socket.id}) joined room ${roomId} (Room users: ${currentCollaborators.length})`);
+      console.log(
+        `[WebSocket] ${displayName} (${socket.id}) joined room ${roomId} (Users: ${currentCollaborators.length}, Strokes: ${existingStrokes.length})`
+      );
     });
 
-    // 2. Disconnect Handler
+    // 2. DRAW_START Handler
+    socket.on('DRAW_START', (rawPayload) => {
+      const roomId = socket.data.roomId;
+      const user = socket.data.user;
+
+      if (!roomId || !user) {
+        socket.emit('ERROR', {
+          code: 'UNAUTHORIZED_ACTION',
+          message: 'Must join a room before drawing.',
+        });
+        return;
+      }
+
+      const validation = validateDrawStartPayload(rawPayload);
+      if (!validation.valid || !validation.data) {
+        socket.emit('ERROR', {
+          code: validation.error?.code || 'INVALID_DRAW_START',
+          message: validation.error?.message || 'Invalid DRAW_START payload.',
+        });
+        return;
+      }
+
+      const { strokeId, tool, color, width, point } = validation.data;
+
+      // Track active stroke in server room
+      const newStroke: Stroke = {
+        id: strokeId,
+        userId: user.id, // Authoritative server ID
+        tool,
+        color,
+        width,
+        points: [point],
+        createdAt: Date.now(),
+      };
+
+      roomManager.startStroke(roomId, newStroke);
+
+      // Broadcast exclusively to other clients in this room (avoid echo)
+      socket.to(roomId).emit('DRAW_START', {
+        strokeId,
+        userId: user.id,
+        tool,
+        color,
+        width,
+        point,
+      });
+    });
+
+    // 3. DRAW_UPDATE Handler (Batched Points)
+    socket.on('DRAW_UPDATE', (rawPayload) => {
+      const roomId = socket.data.roomId;
+      const user = socket.data.user;
+
+      if (!roomId || !user) return;
+
+      const validation = validateDrawUpdatePayload(rawPayload);
+      if (!validation.valid || !validation.data) {
+        return; // Drop invalid batch silently without crashing
+      }
+
+      const { strokeId, points } = validation.data;
+
+      // Append points to active stroke in server memory
+      roomManager.appendStrokePoints(roomId, strokeId, points);
+
+      // Broadcast points batch to peers in room
+      socket.to(roomId).emit('DRAW_UPDATE', {
+        strokeId,
+        userId: user.id,
+        points,
+      });
+    });
+
+    // 4. DRAW_END Handler
+    socket.on('DRAW_END', (rawPayload) => {
+      const roomId = socket.data.roomId;
+      const user = socket.data.user;
+
+      if (!roomId || !user) return;
+
+      const validation = validateDrawEndPayload(rawPayload);
+      if (!validation.valid || !validation.data) return;
+
+      const { strokeId } = validation.data;
+
+      // Finalize stroke and store in canonical room strokes
+      roomManager.finalizeStroke(roomId, strokeId);
+
+      // Broadcast finalization to room peers
+      socket.to(roomId).emit('DRAW_END', {
+        strokeId,
+        userId: user.id,
+      });
+    });
+
+    // 5. ERASE_STROKES Handler (Logical Stroke Deletion)
+    socket.on('ERASE_STROKES', (rawPayload) => {
+      const roomId = socket.data.roomId;
+      const user = socket.data.user;
+
+      if (!roomId || !user) return;
+
+      const validation = validateEraseStrokesPayload(rawPayload);
+      if (!validation.valid || !validation.data) return;
+
+      const { operationId, strokeIds } = validation.data;
+
+      // Apply stroke deletion to server room state
+      const erased = roomManager.eraseStrokes(roomId, strokeIds);
+      if (erased.length > 0) {
+        socket.to(roomId).emit('ERASE_STROKES', {
+          operationId,
+          strokeIds: erased,
+          userId: user.id,
+        });
+      }
+    });
+
+    // 6. Disconnect Handler
     socket.on('disconnect', (reason) => {
       const roomId = socket.data.roomId;
       const user = socket.data.user;
 
       if (roomId && user) {
+        // Clean up any incomplete strokes initiated by this user
+        const abandonedStrokes = roomManager.cleanActiveStrokesForUser(roomId, user.id);
+        if (abandonedStrokes.length > 0) {
+          for (const strokeId of abandonedStrokes) {
+            socket.to(roomId).emit('DRAW_END', { strokeId, userId: user.id });
+          }
+        }
+
         roomManager.removeUser(roomId, user.id);
         socket.to(roomId).emit('USER_LEFT', { userId: user.id });
         console.log(`[WebSocket] ${user.name} (${user.id}) left room ${roomId} [reason: ${reason}]`);
