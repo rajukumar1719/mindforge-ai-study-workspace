@@ -14,9 +14,9 @@ SyncDraw is designed as a high-performance, real-time collaborative whiteboard p
 
 SyncDraw is currently in active stage-by-stage development.
 
-### Implemented Features (Sections 1 – 4)
+### Implemented Features (Sections 1 – 5)
 - **Full-Stack TypeScript Architecture**: Monorepo structure using npm workspaces (`client/` and `server/`), strict TypeScript, and ESLint.
-- **Backend Foundation**: Node.js + Express REST gateway with `/health` monitoring, CORS handling, and graceful shutdown.
+- **Backend Infrastructure**: Node.js + Express REST gateway with `/health` monitoring, CORS handling, and graceful shutdown.
 - **Product Landing Page**: Responsive hero, brand wordmark, capabilities preview, and static architectural illustration.
 - **Room Entry Flows**:
   - Create Room: Display name validation, collision-resistant 6-character room ID generation (`ABC7KQ`), session identity caching, and routing.
@@ -24,16 +24,23 @@ SyncDraw is currently in active stage-by-stage development.
   - Direct Link Handling: Automatic participant name prompt for direct `/room/:roomId` links.
 - **Accessible Modal System**: Focus trapping, `Escape` key dismissal, backdrop click handling, and ARIA attributes.
 - **Core Canvas Engine**: Native HTML5 Canvas 2D engine with unified Pointer Events, high-DPI retina scaling, `ResizeObserver` resilience, and quadratic Bézier curve smoothing.
-- **Complete Local Drawing Toolset (Section 4)**:
-  - **Pen Tool**: Fluid, opaque vector strokes with round caps and joins.
-  - **Highlighter Tool**: Semi-transparent rendering (`0.35` alpha), wider brush presets, smooth curve smoothing.
-  - **Stroke-Level Eraser**: Real-time geometric intersection hit testing that cleanly removes touched strokes.
-  - **Color Palette**: 6 curated presets (`Charcoal`, `Indigo`, `Rose`, `Emerald`, `Amber`, `Violet`) with active indicators (disabled during erasing).
-  - **Brush Sizing**: 5 presets (`2px Fine`, `4px Normal`, `8px Medium`, `14px Broad`, `24px Heavy`) affecting Pen, Highlighter, and Eraser.
-  - **Logical Undo / Redo**: Operation history stack tracking reversible additions, deletions, and clears without memory-heavy raster snapshots.
-  - **Clear Canvas Confirmation**: Accessible dialog with keyboard confirmation (`Enter`) and dismissal (`Escape`). Clear is also undoable!
-  - **PNG Blob Export**: 1-click standalone canvas snapshot download without UI chrome (`syncdraw-{roomId}.png`).
-  - **Keyboard Shortcuts**: `P` (Pen), `H` (Highlighter), `E` (Eraser), `Ctrl/Cmd+Z` (Undo), `Ctrl/Cmd+Shift+Z` (Redo), `Escape` (Close Dialogs). Suppressed when typing in form inputs.
+- **Complete Local Drawing Toolset**:
+  - Pen, Highlighter (`0.35` alpha), and Stroke-Level Eraser with mathematical point-to-segment geometric hit detection.
+  - Color palette (6 presets) and brush sizing (5 presets).
+  - Logical Undo / Redo operation history stack.
+  - Clear canvas with accessible confirmation dialog.
+  - Blob-based PNG export (`syncdraw-{roomId}.png`).
+  - Keyboard shortcuts (`P`, `H`, `E`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z`, `Escape`).
+- **Real-Time Backend & WebSocket Foundation (Section 5)**:
+  - **Socket.IO Real-Time Gateway**: Dedicated bidirectional WebSocket server attached to HTTP server.
+  - **In-Memory RoomManager**: Authoritative room lifecycle, member tracking, and automatic cleanup of empty rooms.
+  - **Server-Authoritative Identity**: Server generates socket IDs and assigns distinct collaborator colors (`#4f46e5`, `#059669`, `#d97706`, `#e11d48`, etc.) from an accessible palette.
+  - **Strict Room Isolation**: Socket.IO room namespaces prevent cross-room message leakage.
+  - **Typed Protocol**: Structured `JOIN_ROOM`, `ROOM_JOINED`, `USER_JOINED`, `USER_LEFT`, and `ERROR` events with runtime shape validation.
+  - **Live User Presence**: Header displays dynamic collaborator count and popover roster with color indicators and "(You)" tag.
+  - **Real Connection Status**: Dynamic badge displaying `Connected`, `Connecting...`, `Reconnecting...`, and `Disconnected`.
+  - **Reconnection Handling**: Automatic rejoining on reconnect without duplicate presence entries.
+  - *Note*: Canvas drawing operates locally; drawing synchronization will follow in Section 6.
 
 ---
 
@@ -41,13 +48,12 @@ SyncDraw is currently in active stage-by-stage development.
 
 The following features are planned for upcoming development sections:
 
-- **Real-Time Collaboration** *(Planned — Section 5+)*: Bidirectional WebSocket synchronization, low-latency delta broadcasting, and optimistic local rendering.
+- **Real-Time Drawing Synchronization** *(Planned — Section 6)*: Low-latency stroke delta broadcasting (`DRAW_START`, `DRAW_UPDATE`, `DRAW_END`) and optimistic local rendering.
 - **Live Collaborative Cursors** *(Planned)*: Synchronized multiplayer mouse cursors displaying teammate names and distinct user color tags.
-- **Collaborator Presence** *(Planned)*: Real-time room participant rosters and presence heartbeats.
-- **Multiplayer Conflict Resolution** *(Planned)*: Collaborative undo/redo trees, operational transforms / CRDT convergence.
+- **Collaborative State History** *(Planned)*: Synchronized undo/redo trees, conflict resolution, and deterministic canvas convergence.
 - **Geometric Shapes & Annotations** *(Planned)*: Rectangle, ellipse, arrow, and text annotation tools.
 - **Room State Persistence** *(Planned)*: Server-side room snapshot storage and historical action replay for late-joining clients.
-- **Offline Resilience & Reconnection** *(Planned)*: Reconnection queue buffering drawing actions during network blips.
+- **Offline Resilience & Operation Queue** *(Planned)*: Reconnection queue buffering drawing actions during network drops.
 
 ---
 
@@ -56,6 +62,7 @@ The following features are planned for upcoming development sections:
 ### Frontend (`client`)
 - **Framework**: React 19
 - **Routing**: React Router v7 (`react-router-dom`)
+- **Real-Time Client**: Socket.IO Client (`socket.io-client`)
 - **Canvas Engine**: Native HTML5 Canvas 2D Context + Quadratic Bézier Smoothing + Geometric Hit Testing
 - **Language**: TypeScript (Strict Mode)
 - **Build Tool**: Vite
@@ -64,22 +71,23 @@ The following features are planned for upcoming development sections:
 
 ### Backend (`server`)
 - **Runtime**: Node.js
-- **Language**: TypeScript (Strict Mode)
+- **Real-Time Gateway**: Socket.IO Server (`socket.io`)
 - **Web Framework**: Express
+- **Language**: TypeScript (Strict NodeNext)
 - **Tooling**: `tsx` (TypeScript Execute / Watch)
 
 ---
 
 ## Keyboard Shortcuts
 
-| Key | Action | Description |
+| Key | Action | Scope |
 |---|---|---|
-| `P` | Pen Tool | Selects standard drawing pen |
-| `H` | Highlighter Tool | Selects semi-transparent highlighter |
-| `E` | Eraser Tool | Selects stroke-level object eraser |
-| `Ctrl+Z` / `Cmd+Z` | Undo | Reverts previous drawing / erasing operation |
-| `Ctrl+Shift+Z` / `Cmd+Shift+Z` | Redo | Restores previously undone operation |
-| `Escape` | Close Dialog | Closes open modals or confirmation dialogs |
+| `P` | Pen Tool | Global |
+| `H` | Highlighter Tool | Global |
+| `E` | Eraser Tool | Global |
+| `Ctrl+Z` / `Cmd+Z` | Undo | Global |
+| `Ctrl+Shift+Z` / `Cmd+Shift+Z` | Redo | Global |
+| `Escape` | Close Dialog | Global |
 
 *Note: Drawing shortcuts are automatically disabled while focused on text input fields.*
 
