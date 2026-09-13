@@ -7,6 +7,8 @@ export function createRoomState(roomId: string): Room {
   return {
     roomId,
     users: new Map(),
+    strokes: [],
+    activeStrokes: new Map(),
     createdAt: Date.now(),
   };
 }

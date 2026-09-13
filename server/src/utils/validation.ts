@@ -131,13 +131,6 @@ export function isValidPoint(point: unknown): point is { x: number; y: number; p
 /**
  * Validates DRAW_START payload.
  */
-import type {
-  DrawStartPayload,
-  DrawUpdatePayload,
-  DrawEndPayload,
-  EraseStrokesPayload,
-} from '../types/collaboration.js';
-
 export function validateDrawStartPayload(payload: unknown): ValidationResult<DrawStartPayload> {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return {
