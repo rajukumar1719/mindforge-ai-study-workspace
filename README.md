@@ -19,6 +19,16 @@ SyncDraw is currently in active stage-by-stage development.
   - React + Vite + Tailwind CSS frontend shell established with strict type checking.
   - Node.js + Express backend foundation configured with environment management, `/health` endpoint, and graceful shutdown.
   - Development tooling, strict typing, and build pipelines verified.
+
+- **Section 2 (Landing Page + Room Entry Flows)**: Completed
+  - Clean, developer-grade landing page with SyncDraw branding, hero tagline, and capabilities preview.
+  - Accessible modal dialog system with keyboard focus management and `Escape` key dismissal.
+  - Create Room flow: Display name validation, URL-safe room ID generation (e.g. `ABC7KQ`), session identity caching, and navigation to `/room/:roomId`.
+  - Join Room flow: Display name and room code validation, room ID normalization, and direct routing.
+  - Client-side routing (`/`, `/room/:roomId`, `*`) using React Router.
+  - Room Page Placeholder: Direct link entry handling with participant name prompt, URL-safe room code validation, 1-click room link sharing, and explicit status indicators.
+  - Friendly 404 Not Found route.
+
 - **Subsequent Sections**: Under development (see Planned Features below).
 
 ---
@@ -27,13 +37,13 @@ SyncDraw is currently in active stage-by-stage development.
 
 The following features are planned for upcoming development sections:
 
-- **Interactive Drawing Engine** *(Planned)*: Freehand pen tool, highlighter, dynamic brush stroke smoothing, customizable stroke color/width, and geometric shapes.
+- **Interactive Drawing Engine** *(Planned — Section 3)*: Freehand pen tool, highlighter, dynamic brush stroke smoothing, customizable stroke color/width, and geometric shapes.
 - **Canvas Operations** *(Planned)*: Pan, zoom, responsive resize handling, canvas clear, and grid overlay.
-- **Real-Time Collaboration** *(Planned)*: Bidirectional WebSocket synchronization, low-latency delta broadcasting, and optimistic local rendering.
-- **Room Management** *(Planned)*: Unique shareable room URLs, instant room creation, join flow, and active participant presence tracking.
+- **Real-Time Collaboration** *(Planned — Section 4+)*: Bidirectional WebSocket synchronization, low-latency delta broadcasting, and optimistic local rendering.
+- **Room Management & Persistence** *(Planned)*: Authoritative server-side room registry, active participant presence tracking, and state persistence.
 - **Live Collaborative Cursors** *(Planned)*: Synchronized multiplayer mouse cursors displaying teammate names and distinct user color tags.
 - **State History & Conflict Resolution** *(Planned)*: Local and remote undo/redo management, chronological action history stack, and deterministic convergence.
-- **Persistence & Export** *(Planned)*: Canvas snapshot export to PNG/SVG/JSON, with room state persistence.
+- **Persistence & Export** *(Planned)*: Canvas snapshot export to PNG/SVG/JSON.
 - **Offline Resilience** *(Planned)*: Reconnection queue buffering drawing actions during network blips.
 
 ---
@@ -42,9 +52,11 @@ The following features are planned for upcoming development sections:
 
 ### Frontend (`client`)
 - **Framework**: React 19
+- **Routing**: React Router v7 (`react-router-dom`)
 - **Language**: TypeScript (Strict Mode)
 - **Build Tool**: Vite
 - **Styling**: Tailwind CSS v4
+- **Linting**: ESLint flat config with `typescript-eslint` & `eslint-plugin-react-hooks`
 
 ### Backend (`server`)
 - **Runtime**: Node.js
@@ -104,6 +116,9 @@ npm run dev:client
 ```bash
 # Run TypeScript strict typecheck across all workspaces
 npm run typecheck
+
+# Run ESLint on client
+npm run lint
 
 # Build both client and server for production
 npm run build
