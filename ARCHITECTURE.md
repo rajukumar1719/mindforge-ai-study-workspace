@@ -1,6 +1,6 @@
 # SyncDraw Architecture Document
 
-This document details the architectural foundation and rendering mechanics of **SyncDraw** ("Real-Time Collaborative Drawing Canvas"), covering current structural choices and planned design layers for future development phases.
+This document details the architectural foundation, rendering mechanics, and local operation model of **SyncDraw** ("Real-Time Collaborative Drawing Canvas"), covering current structural choices and planned design layers for future development phases.
 
 ---
 
@@ -23,100 +23,99 @@ Room Route (/room/:roomId)
     │  • Room ID Validation & Shareable Link
     │  • Direct URL Entry Participant Name Prompt
     ▼
-Canvas Drawing Engine (Active — Section 3)
+Canvas Drawing Engine & Toolset (Active — Sections 3 & 4)
     │
-    │  • Native HTML5 Canvas 2D Surface
-    │  • Resolution-Independent Stroke Data Model
-    │  • Unified Pointer Events (Mouse / Touch / Stylus)
-    │  • Quadratic Bézier Smoothing
-    │  • High-DPI / Retina Scaling
-    │  • Resize Resilience via ResizeObserver
+    │  • Native HTML5 Canvas 2D Surface (High-DPI / Retina)
+    │  • Tools: Pen, Highlighter (0.35 Alpha), Stroke-Level Eraser
+    │  • Logical Reversible Operation Stack (Add, Erase, Clear)
+    │  • Bounded Point-to-Segment Geometric Hit Testing
+    │  • Blob-Based PNG Export
+    │  • Global Shortcut Dispatcher (with Input Guard)
     ▼
-Future WebSocket Collaboration Layer (Planned — Section 4+)
+Future WebSocket Collaboration Layer (Planned — Section 5+)
     │
-    │  • Bidirectional Delta Broadcasting
+    │  • Bidirectional Delta Broadcasting (add-stroke, erase-strokes)
     │  • Live Presence & Multi-User Cursor Coordinates
-    │  • Conflict Resolution & Synchronized History Stack
+    │  • Collaborative State Trees & Conflict Resolution
 ```
 
 ---
 
-## 2. Canvas Rendering Architecture (Section 3)
+## 2. Drawing Operations Architecture (Section 4)
 
-The canvas engine is built to deliver smooth 60fps sketching with low latency, high visual fidelity, and clean decoupling from React's component lifecycle.
+Section 4 elevates the canvas engine into an operational drawing environment modeled intentionally around reversible discrete events rather than lossy pixel manipulation.
 
-### 2.1 HTML5 Canvas API vs. SVG Tradeoffs
-- **Canvas API (Chosen)**: Direct immediate-mode rasterization using HTML5 2D Context. Unlike retained-mode SVG DOM nodes (which incur heavy layout and tree overhead when handling thousands of path coordinates), HTML5 Canvas handles arbitrary stroke density with consistent frame times.
-- **Stroke Data as the Source of Truth**: While the canvas is an immediate-mode surface, all drawing actions are modeled as immutable, structured data objects (`Stroke[]`). This enables complete replayability, serialization, and future network transmission.
-
-### 2.2 Stroke Data Model
+### 2.1 Tool Representation & Rendering
 ```typescript
-interface Point {
-  x: number;          // Logical CSS X coordinate
-  y: number;          // Logical CSS Y coordinate
-  pressure?: number;  // Stylus/touch pressure (0.0 to 1.0)
-}
+type DrawingTool = 'pen' | 'highlighter' | 'eraser';
 
 interface Stroke {
   id: string;         // Unique collision-resistant UUID (crypto.randomUUID)
-  userId: string;     // Creator display name / ID
-  tool: 'pen';        // Active drawing tool
+  userId: string;     // Creator display name
+  tool: DrawingTool;  // 'pen' | 'highlighter' | 'eraser'
   color: string;      // Hex/RGB stroke color
-  width: number;      // Logical stroke width in pixels
+  width: number;      // Stroke width in logical pixels
   points: Point[];    // Chronological array of points
   createdAt: number;  // Epoch timestamp (ms)
 }
 ```
 
-### 2.3 Unified Pointer Event Pipeline
-- **Pointer Events**: Employs `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, and `pointerleave` instead of separate mouse and touch implementations, providing unified handling for mouse, touch screens, and active stylus pens.
-- **Pointer Capture**: Uses `canvas.setPointerCapture(pointerId)` upon `pointerdown`. This guarantees that strokes continue tracking smoothly even if the user swiftly drags outside the canvas boundary.
-- **Gesture Suppression**: Sets `touchAction: 'none'` on the `<canvas>` element to suppress browser pull-to-refresh, pan, and pinch zoom gestures exclusively across the drawing surface without disrupting normal scrolling outside the canvas container.
+- **Pen**: Standard solid-color stroke rendered using quadratic Bézier smoothing through point midpoints with round caps and joins.
+- **Highlighter**: Rendered within the same Bézier curve pipeline with `ctx.save()`, `ctx.globalAlpha = 0.35`, and wider brush presets. Semi-transparency allows background sketches or grid lines to remain readable through highlights.
+- **Eraser (Stroke-Level Object Eraser)**:
+  Rather than rasterizing white lines (which fails on grid/dark backgrounds and bloats stroke count) or cutting destructive pixel masks via `destination-out` (which prevents granular undo and makes network synchronization extremely heavy), SyncDraw implements a **stroke-level object eraser**.
+  - During pointer movement with the eraser active, the engine checks distance from the eraser pointer position `(ex, ey)` with radius `R = width / 2` to every existing stroke.
+  - A stroke is considered intersected if the minimum distance from `(ex, ey)` to any segment `[p_i, p_{i+1}]` is `<= R + stroke.width / 2`.
+  - Touched strokes are removed from the active collection, stored with their original indices, and committed on `pointerup` as an `erase-strokes` operation.
 
-### 2.4 Coordinate Conversion & High-DPI / Retina Handling
-- **Device Pixel Ratio (`dpr`)**:
-  ```typescript
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
-  canvas.width = Math.round(logicalWidth * dpr);
-  canvas.height = Math.round(logicalHeight * dpr);
-  canvas.style.width = `${logicalWidth}px`;
-  canvas.style.height = `${logicalHeight}px`;
-  ctx.scale(dpr, dpr);
-  ```
-  This ensures 1 logical CSS pixel maps to physical hardware pixels, eliminating blurriness on 4K, MacBook Retina, and mobile screens.
-- **Coordinate Normalization**: Logical points are calculated relative to `canvas.getBoundingClientRect()`, accounting for CSS scaling and browser zoom:
-  ```typescript
-  const rawX = (e.clientX - rect.left) * (logicalWidth / rect.width);
-  const rawY = (e.clientY - rect.top) * (logicalHeight / rect.height);
-  ```
+### 2.2 Logical Operations & Reversible History (Undo / Redo)
+SyncDraw models state changes as discrete, reversible operational deltas:
 
-### 2.5 Quadratic Bézier Curve Smoothing
-Rather than rendering crude polyline segments between raw sampled points (which appear jagged), the renderer computes midpoints between successive points and draws smooth quadratic curves:
 ```typescript
-ctx.beginPath();
-ctx.moveTo(points[0].x, points[0].y);
-
-for (let i = 1; i < points.length - 1; i++) {
-  const current = points[i];
-  const next = points[i + 1];
-  const midX = (current.x + next.x) / 2;
-  const midY = (current.y + next.y) / 2;
-  ctx.quadraticCurveTo(current.x, current.y, midX, midY);
-}
-
-ctx.lineTo(last.x, last.y);
-ctx.stroke();
+type CanvasOperation =
+  | { type: 'add-stroke'; stroke: Stroke }
+  | { type: 'erase-strokes'; strokes: { stroke: Stroke; index: number }[] }
+  | { type: 'clear-canvas'; strokes: Stroke[] };
 ```
-Single-point taps render as round dots (`ctx.arc`).
 
-### 2.6 Resize Strategy
-- **ResizeObserver**: Observes the canvas parent container element.
-- **Preserved Geometry**: Upon resize, physical canvas dimensions are updated and `ctx.scale(dpr, dpr)` is reapplied.
-- **Non-Destructive Redraw**: Because all strokes are preserved as resolution-independent logical vectors in `strokesRef`, `renderAllStrokes(ctx, strokes, width, height)` immediately restores the entire artwork with zero loss of quality or stroke truncation.
+#### Undo / Redo Mechanism:
+1. **Adding a Stroke**:
+   - `applyOperation`: Appends `stroke` to `strokes`.
+   - Appends operation to `undoStack`. Clears `redoStack`.
+2. **Erasing Strokes**:
+   - `applyOperation`: Filters out strokes whose IDs match the erased items.
+   - Appends operation with `{ stroke, index }` to `undoStack`. Clears `redoStack`.
+3. **Clearing Canvas**:
+   - `applyOperation`: Sets `strokes` to `[]`.
+   - Records all cleared strokes in `{ type: 'clear-canvas', strokes }` on `undoStack`.
+4. **Executing Undo**:
+   - Pops last operation from `undoStack`.
+   - Pushes operation to `redoStack`.
+   - Calls `revertOperation`:
+     - Reverting `add-stroke`: Removes stroke by ID.
+     - Reverting `erase-strokes`: Re-inserts each deleted stroke at its original index.
+     - Reverting `clear-canvas`: Restores the complete array of cleared strokes!
+5. **Executing Redo**:
+   - Pops last operation from `redoStack`.
+   - Pushes operation to `undoStack`.
+   - Calls `applyOperation`.
 
-### 2.7 Performance & React Decoupling
-- High-frequency pointer events (`pointermove`) run at 60–120Hz. To avoid React state thrashing, active strokes are accumulated in `useRef` instances and rendered incrementally via direct 2D context drawing (`renderIncrementalSegment`).
-- React state (`setStrokes`) is updated only when a stroke is finalized on `pointerup`, ensuring the UI thread remains responsive and stutter-free.
+### 2.3 Intentional Suitability for Future WebSocket Synchronization
+This architecture was specifically chosen to prepare for Section 5+ without refactoring:
+- **Zero Raster Serialization**: Whiteboards that rely on canvas raster snapshots cannot sync efficiently because sending megabytes of image diffs over WebSockets causes severe network lag and high server memory costs.
+- **Compact Delta Messages**:
+  - A newly completed stroke is already a clean JSON payload: `broadcast({ type: 'stroke:added', stroke })`.
+  - An erase gesture is already an array of IDs: `broadcast({ type: 'strokes:erased', strokeIds })`.
+- **Deterministic Replay**: Late-joining clients can be sent the room's serialized stroke log and replay the exact artwork locally in milliseconds.
+
+### 2.4 Blob-Based PNG Export
+Exporting uses the native `canvas.toBlob((blob) => { ... }, 'image/png')` API:
+- **No UI Bleed**: Export operates directly on the underlying `<canvas>` DOM element via a forwarded React ref, ensuring floating toolbars, room headers, and user dialogs are never captured.
+- **Memory Efficiency**: Avoids creating large base64 data URIs that trigger browser garbage collection spikes. Generates a clean object URL and triggers download of `syncdraw-{roomId}.png`.
+
+### 2.5 Keyboard Shortcut Architecture
+- A centralized window listener detects single-key tool switches (`P`, `H`, `E`) and modifier combos (`Ctrl+Z`, `Ctrl+Shift+Z`).
+- **Focus Safety Guard**: Validates `e.target` to ensure shortcuts are completely disabled when users are typing in text inputs, textareas, or modal fields.
 
 ---
 
@@ -127,16 +126,20 @@ mindforge/ (SyncDraw Workspace Root)
 ├── client/
 │   ├── src/
 │   │   ├── canvas/                     # Standalone Canvas Engine
+│   │   │   ├── export.ts               # Blob-based PNG export utility
+│   │   │   ├── geometry.ts             # Segment distance & circle-stroke intersection
+│   │   │   ├── history.ts              # Logical operation application & reversion
 │   │   │   ├── index.ts                # Public canvas module exports
 │   │   │   ├── pointer.ts              # Pointer capture & unified event controller
-│   │   │   ├── renderer.ts             # Bézier curve smoothing & redraw routines
+│   │   │   ├── renderer.ts             # Bézier curve smoothing & tool-specific alpha
 │   │   │   ├── scaling.ts              # High-DPI resolution & coordinate transformation
-│   │   │   ├── stroke.ts               # Stroke factory & immutability helpers
-│   │   │   └── types.ts                # Point, Stroke, and CanvasSettings types
+│   │   │   ├── stroke.ts               # Stroke factory & point appending helpers
+│   │   │   └── types.ts                # Point, Stroke, CanvasOperation, CanvasSettings
 │   │   ├── components/
 │   │   │   ├── canvas/
-│   │   │   │   ├── Canvas.tsx          # React Canvas host & ResizeObserver
-│   │   │   │   └── Toolbar.tsx         # Floating pen, palette, and brush size controls
+│   │   │   │   ├── Canvas.tsx          # Canvas host, stroke-level eraser & ref export
+│   │   │   │   ├── ClearConfirmDialog.tsx # Accessible modal for canvas clear confirmation
+│   │   │   │   └── Toolbar.tsx         # Floating toolbar with tools, presets, undo/redo
 │   │   │   ├── ui/
 │   │   │   │   └── Modal.tsx           # Accessible modal dialog
 │   │   │   ├── CreateRoomDialog.tsx    # Room creation modal
@@ -150,7 +153,7 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   ├── pages/
 │   │   │   ├── HomePage.tsx            # Landing page
 │   │   │   ├── NotFoundPage.tsx        # 404 page
-│   │   │   └── RoomPage.tsx            # Room workspace host
+│   │   │   └── RoomPage.tsx            # Room workspace host with undo/redo & shortcuts
 │   │   ├── types/                      # Client type definitions
 │   │   ├── utils/                      # Utilities (roomId, storage, cn)
 │   │   ├── App.tsx                     # Route definitions
