@@ -78,26 +78,39 @@ export const PresenceBadge: React.FC<PresenceBadgeProps> = ({
             </span>
           </div>
 
-          <ul className="space-y-1 max-h-48 overflow-y-auto">
+          <ul className="space-y-1 max-h-56 overflow-y-auto">
             {collaborators.map((c) => {
               const isCurrentUser = c.id === currentUserId;
+              const initial = c.name ? c.name.charAt(0).toUpperCase() : '?';
+
               return (
                 <li
                   key={c.id}
                   className="flex items-center justify-between px-2 py-1.5 rounded-xl hover:bg-slate-50 text-xs transition-colors"
                 >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {/* Collaborator Avatar Initial Badge with Stable Identity Color */}
+                    <div
+                      className="w-5 h-5 rounded-full text-[10px] font-bold text-white flex items-center justify-center shrink-0 shadow-2xs"
                       style={{ backgroundColor: c.color }}
-                    />
-                    <span className="font-medium text-slate-800 truncate" title={c.name}>
-                      {c.name}
-                    </span>
+                      title={c.name}
+                    >
+                      {initial}
+                    </div>
+
+                    <div className="flex flex-col min-w-0">
+                      <span className="font-semibold text-slate-800 truncate leading-tight" title={c.name}>
+                        {c.name}
+                      </span>
+                      <span className="text-[10px] text-emerald-600 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Online
+                      </span>
+                    </div>
                   </div>
 
                   {isCurrentUser && (
-                    <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 shrink-0">
+                    <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 shrink-0 ml-2">
                       You
                     </span>
                   )}
