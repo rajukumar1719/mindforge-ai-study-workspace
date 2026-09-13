@@ -204,16 +204,80 @@ Rendering remote cursors on the native HTML5 `<canvas>` would force full canvas 
 
 ---
 
-## 5. Drawing Operations Architecture (Section 4)
+## 5. Collaborative Undo/Redo & Operation History Architecture (Section 8)
+
+### 5.1 Operation-Based Collaboration Model
+Rather than syncing raw pixel arrays or raster screenshots, SyncDraw models all canvas mutations as discrete, immutable, typed operations:
+```typescript
+type CollaborativeOperation =
+  | { operationId: string; type: 'add-stroke'; userId: string; stroke: Stroke; timestamp: number }
+  | { operationId: string; type: 'erase-strokes'; userId: string; strokeIds: string[]; timestamp: number }
+  | { operationId: string; type: 'clear-canvas'; userId: string; timestamp: number }
+  | { operationId: string; type: 'undo'; userId: string; targetOperationId: string; timestamp: number }
+  | { operationId: string; type: 'redo'; userId: string; targetOperationId: string; timestamp: number };
+```
+- **`operationId`**: Globally unique identifier (e.g. `op_<strokeId>` or `op_<type>_<timestamp>_<random>`) guaranteeing exact-once processing.
+- **Server Authority**: The server validates all incoming `OPERATION_APPLY` payloads, authoritatively assigns `operation.userId = socket.id`, enforces author-scoping rules, rejects duplicates, and broadcasts canonical operations to the room via `OPERATION_APPLIED`.
+
+### 5.2 Author-Scoped Undo / Redo Rules
+> [!IMPORTANT]
+> **Undo/redo is author-scoped: a collaborator can undo and redo their own operations without removing another collaborator's work.**
+
+1. **Independent Author Stacks**: Alice can undo only operations authored by Alice. Bob can undo only operations authored by Bob.
+2. **Preservation of Remote Work**: When Alice undos an operation, intervening and concurrent strokes created by Bob remain completely unaffected.
+3. **Non-Destructive Operation Log**: Operations are never deleted from history. An `undo` operation deactivates the target operation (`record.active = false`). A `redo` operation reactivates it (`record.active = true`).
+4. **Redo Eligibility**: Redo can only target an operation authored by the requesting user that is currently undone. Attempting to redo another user's operation or an active operation is rejected by the server (`AUTHOR_MISMATCH`, `NOT_UNDONE`).
+
+### 5.3 Collaborative Clear Canvas & Reversibility
+- **Structured Clear**: Clear canvas emits a lightweight `clear-canvas` operation instead of sending blank canvas images or wiping history.
+- **Undoable Clear**: When Alice undos `clear-canvas`, strokes that preceded the clear are logically restored.
+- **Interleaving Drawing Preservation**: If drawing operations occur after a clear (`A1, B1, CLEAR, A2, B2`), undoing `CLEAR` restores `A1` and `B1` while preserving `A2` and `B2`.
+
+### 5.4 Deterministic Canvas Reconstruction Algorithm
+Canvas rendering is separated into two modes:
+1. **Incremental Mode (Local Drawing & Real-Time Streaming)**: Points render incrementally on native 2D canvas context at 60–120Hz without full redraws.
+2. **Reconstruction Mode (Undo / Redo / Clear / Late Hydration)**: The canonical visible state is rebuilt on-demand by replaying active base operations in chronological order:
+```typescript
+function reconstructCanvasState(operations: OperationRecord[]): Stroke[] {
+  let strokes: Stroke[] = [];
+  for (const record of operations) {
+    if (!record.active) continue;
+    const op = record.operation;
+    if (op.type === 'add-stroke') {
+      strokes.push(op.stroke);
+    } else if (op.type === 'erase-strokes') {
+      const idSet = new Set(op.strokeIds);
+      strokes = strokes.filter((s) => !idSet.has(s.id));
+    } else if (op.type === 'clear-canvas') {
+      strokes = [];
+    }
+  }
+  return strokes;
+}
+```
+This algorithm is $O(N)$ with respect to room operation count, executes in $< 1\text{ms}$ for hundreds of strokes, and produces identical visual output on every client.
+
+### 5.5 Canonical Server History & SYNC_STATE Recovery
+- The server maintains `room.operations` as the canonical single source of truth.
+- When new or reconnecting participants join a room, `SYNC_STATE` delivers both the pre-calculated `strokes` and the complete `operations: OperationRecord[]` log.
+- Late-joining clients immediately reconstruct the active stroke state and can participate in author-scoped undo/redo.
+
+### 5.6 Duplicate Protection & Concurrency Model
+- **Set-Based Deduplication**: Both server and client maintain an `appliedOperationIds: Set<string>` to guarantee that network duplicates, retries, or socket echoes are ignored ($O(1)$ check).
+- **Concurrent Operations**: Simultaneous undos or interleaved undo and draw operations by different authors are ordered sequentially by server arrival timestamp and resolved deterministically across all connected peers.
+
+---
+
+## 6. Drawing Operations Architecture (Section 4)
 
 Section 4 established the local drawing environment modeled around reversible operational deltas:
 
-### 5.1 Tools & Rendering
+### 6.1 Tools & Rendering
 - **Pen**: Solid-color stroke with quadratic Bézier smoothing and round caps/joins.
 - **Highlighter**: Semi-transparent stroke rendered with `ctx.globalAlpha = 0.35` and wide presets.
 - **Stroke-Level Eraser**: Mathematical point-to-segment Euclidean distance check removes intersected strokes cleanly without raster artifacts.
 
-### 5.2 Reversible Operation Stack (Undo / Redo)
+### 6.2 Reversible Operation Stack (Undo / Redo)
 ```typescript
 type CanvasOperation =
   | { type: 'add-stroke'; stroke: Stroke }
@@ -225,7 +289,7 @@ type CanvasOperation =
 
 ---
 
-## 6. Canvas Rendering Architecture (Section 3)
+## 7. Canvas Rendering Architecture (Section 3)
 
 - Native HTML5 Canvas 2D context.
 - High-DPI / Retina resolution scaling (`canvas.width = rect.width * dpr`, `ctx.scale(dpr, dpr)`).
@@ -234,7 +298,7 @@ type CanvasOperation =
 
 ---
 
-## 7. Directory Structure
+## 8. Directory Structure
 
 ```text
 mindforge/ (SyncDraw Workspace Root)
@@ -299,6 +363,7 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   └── server.ts                   # Express + Socket.IO HTTP server
 │   ├── test-drawing-sync.mjs           # Automated drawing sync test suite
 │   ├── test-cursor-sync.mjs            # Automated live cursor test suite
+│   ├── test-collaborative-history.mjs  # Automated collaborative history test suite
 │   ├── package.json
 │   └── tsconfig.json
 │
