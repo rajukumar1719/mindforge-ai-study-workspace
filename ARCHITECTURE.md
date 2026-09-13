@@ -32,7 +32,7 @@ Browser A (Room ABC123)       Browser B (Room ABC123)       Browser C (Room XYZ7
 ```
 
 > [!NOTE]
-> **Section 8 Complete**: Collaborative undo/redo, collaborative clear, and deterministic operation history are fully implemented. Undo and redo are strictly author-scoped: a collaborator can undo and redo their own operations without removing another collaborator's work. The canonical operation log is maintained non-destructively on the server, and visible strokes are deterministically reconstructed on-demand.
+> **Section 9 Complete**: Reconnection reliability, durable client-side pending operation queue with defensive `localStorage` persistence, server idempotency, operation acknowledgements (`OPERATION_ACK`), and safe reconnect reconciliation are fully implemented. Drawing, erasing, undo, redo, and clear remain 100% operational while offline (local-first). When connection is restored, canonical state is safely reconciled and missing operations are replayed and acknowledged with zero duplication.
 
 ---
 
@@ -268,16 +268,123 @@ This algorithm is $O(N)$ with respect to room operation count, executes in $< 1\
 
 ---
 
-## 6. Drawing Operations Architecture (Section 4)
+---
+
+## 6. Reconnection Reliability, Offline Operation Queue & Safe Replay (Section 9)
+
+SyncDraw provides seamless resilience against transient network disconnects, socket interruptions, and browser refreshes using a local-first durable pending queue, authoritative operation acknowledgements (`OPERATION_ACK`), server idempotency, and reconciliation.
+
+### 6.1 Authoritative Connection State Machine
+The client manages connection state via a single authoritative state model rather than scattered boolean flags:
+```typescript
+type ConnectionState =
+  | 'connected'     // WebSocket active, two-way sync live
+  | 'connecting'    // Initial socket handshake / room entry
+  | 'reconnecting'  // Connection temporarily lost, retry loop active
+  | 'offline'       // Browser navigator.onLine is false or prolonged failure
+  | 'disconnected'; // Normal room departure or terminal disconnection
+```
+- **Transitions**:
+  - `connecting` $\to$ `connected` (on socket connect & `JOIN_ROOM`)
+  - `connected` $\to$ `reconnecting` (on transport disconnect / socket reconnect attempt)
+  - `reconnecting` $\to$ `offline` (if `window.onoffline` fires or `!navigator.onLine`)
+  - `offline` $\to$ `reconnecting` (when `window.ononline` fires)
+  - `reconnecting` $\to$ `connected` (successful reconnect & `SYNC_STATE` hydration)
+  - Normal leave $\to$ `disconnected`
+
+### 6.2 Architecture Flows
+
+#### Flow A: Connected Operation Lifecycle
+```text
+CONNECTED
+   ↓
+MUTATION (Draw / Erase / Undo / Redo / Clear)
+   ↓
+LOCAL APPLY (Instant visual update)
+   ↓
+PENDING QUEUE (Persisted to localStorage)
+   ↓
+OPERATION_APPLY (Dispatched over WebSocket)
+   ↓
+SERVER VALIDATION & COMMIT
+   ↓
+OPERATION_ACK (Sender receives confirmation)
+   ↓
+REMOVE FROM PENDING QUEUE (Storage synchronized)
+   ↓
+CANONICAL STATE CONVERGENCE
+```
+
+#### Flow B: Offline Disconnection & Reconnection Recovery Lifecycle
+```text
+DISCONNECTED / OFFLINE
+   ↓
+LOCAL MUTATION (User continues drawing uninterrupted)
+   ↓
+LOCAL APPLY (Zero latency, local undo/redo remains functional)
+   ↓
+PERSIST PENDING (Durable entry saved to syncdraw:pending-operations:v1)
+   ↓
+CONNECTION RESTORED
+   ↓
+JOIN_ROOM & SYNC_STATE RECEIVED
+   ↓
+RECONCILE PENDING LOCAL OPERATIONS
+   ├─ If operationId in server canonical history → Remove from pending queue (no re-send)
+   └─ If operationId missing from server → Replay in chronological order
+   ↓
+OPERATION_ACK RECEIVED FOR REPLAYED OPERATIONS
+   ↓
+CONVERGED CANONICAL STATE (All peers synchronized)
+```
+
+### 6.3 Operation Acknowledgement Protocol (`OPERATION_ACK`)
+Every client mutation sent via `OPERATION_APPLY` receives an authoritative confirmation directed specifically to the sender:
+```typescript
+interface OperationAckData {
+  operationId: string;
+  accepted: boolean;
+  reason?: string;
+}
+```
+- When `accepted === true`: The client acknowledges the operation, safely removing it from the durable pending queue.
+- When `accepted === false`: The operation is removed from the queue to prevent infinite retries and logged with a non-blocking notification.
+- ACK correlates strictly by `operationId` and does **not** trigger double application.
+
+### 6.4 Durable Client-Side Pending Operation Queue (`queue.ts`)
+- **Storage Key**: `syncdraw:pending-operations:v1`.
+- **Room & Session Isolation**: Persisted records are partitioned strictly by `roomId` and `userSessionId` (display name). Pending operations from Room A can never leak or replay into Room B.
+- **Defensive Storage Validation**: `readAllPendingRecordsFromStorage()` validates JSON arrays, string bounds, and operation schemas. Malformed or legacy storage entries are safely discarded without crashing the client.
+- **Refresh Recovery**: If a user refreshes the browser while offline, pending operations are seamlessly restored on mount and displayed immediately on the canvas.
+
+### 6.5 Server Idempotency
+- If the server receives an `OPERATION_APPLY` with an `operationId` that already exists in `room.appliedOperationIds`:
+  - It does **not** apply the operation again.
+  - It does **not** duplicate strokes or operation records.
+  - It returns `OPERATION_ACK` with `{ accepted: true, reason: 'ALREADY_CANONICAL' }`.
+  - It does not broadcast duplicate `OPERATION_APPLIED` events to the room.
+
+### 6.6 Ephemeral Cursor Handling During Network Drops
+- Ephemeral cursor updates (`CURSOR_MOVE`) are **never** queued or saved to storage.
+- When `connectionState !== 'connected'`, cursor transmission is completely suppressed.
+- Upon reconnect, presence returns via `ROOM_JOINED`, and live cursors resume organically as soon as the user moves their pointer.
+
+### 6.7 Reconnection Grace Period for In-Memory Rooms
+- When the last participant temporarily disconnects from a room containing drawing history, `RoomManager` retains room state for a 2-minute grace period (`scheduleRoomCleanup`).
+- If the user reconnects within the grace period, `cancelRoomCleanup` retains full canvas history without memory loss.
+
+---
+
+## 7. Drawing Operations Architecture (Section 4)
 
 Section 4 established the local drawing environment modeled around reversible operational deltas:
 
-### 6.1 Tools & Rendering
+### 7.1 Tools & Rendering
 - **Pen**: Solid-color stroke with quadratic Bézier smoothing and round caps/joins.
 - **Highlighter**: Semi-transparent stroke rendered with `ctx.globalAlpha = 0.35` and wide presets.
 - **Stroke-Level Eraser**: Mathematical point-to-segment Euclidean distance check removes intersected strokes cleanly without raster artifacts.
 
-### 6.2 Reversible Operation Stack (Undo / Redo)
+### 7.2 Reversible Operation Stack (Undo / Redo)
 ```typescript
 type CanvasOperation =
   | { type: 'add-stroke'; stroke: Stroke }
@@ -289,7 +396,7 @@ type CanvasOperation =
 
 ---
 
-## 7. Canvas Rendering Architecture (Section 3)
+## 8. Canvas Rendering Architecture (Section 3)
 
 - Native HTML5 Canvas 2D context.
 - High-DPI / Retina resolution scaling (`canvas.width = rect.width * dpr`, `ctx.scale(dpr, dpr)`).
@@ -298,7 +405,7 @@ type CanvasOperation =
 
 ---
 
-## 8. Directory Structure
+## 9. Directory Structure
 
 ```text
 mindforge/ (SyncDraw Workspace Root)
@@ -315,7 +422,8 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   │   └── types.ts                # Point, Stroke, CanvasOperation types
 │   │   ├── collaboration/              # Real-Time Client Abstraction
 │   │   │   ├── index.ts                # Module exports
-│   │   │   ├── socketClient.ts         # Socket.IO connection & lifecycle client
+│   │   │   ├── queue.ts                # Durable pending operation queue & storage
+│   │   │   ├── socketClient.ts         # Socket.IO connection & state machine client
 │   │   │   └── types.ts                # Client collaboration event contracts
 │   │   ├── components/
 │   │   │   ├── canvas/
@@ -338,7 +446,7 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   ├── pages/
 │   │   │   ├── HomePage.tsx            # Landing page
 │   │   │   ├── NotFoundPage.tsx        # 404 page
-│   │   │   └── RoomPage.tsx            # Room workspace host
+│   │   │   └── RoomPage.tsx            # Room workspace host & offline reconciliation
 │   │   ├── types/
 │   │   ├── utils/
 │   │   ├── App.tsx
@@ -350,10 +458,10 @@ mindforge/ (SyncDraw Workspace Root)
 ├── server/
 │   ├── src/
 │   │   ├── rooms/
-│   │   │   ├── roomManager.ts          # In-memory room registry & cleanup
+│   │   │   ├── roomManager.ts          # In-memory room registry, cleanup & grace period
 │   │   │   └── roomState.ts            # Room state container factory
 │   │   ├── websocket/
-│   │   │   └── socket.ts               # Socket.IO lifecycle & room isolation
+│   │   │   └── socket.ts               # Socket.IO lifecycle & ACK handling
 │   │   ├── utils/
 │   │   │   ├── colors.ts               # Collaborator color assignment
 │   │   │   └── validation.ts           # Payload & room ID validation
@@ -361,9 +469,10 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   │   ├── collaboration.ts        # Server-authoritative contracts
 │   │   │   └── index.ts
 │   │   └── server.ts                   # Express + Socket.IO HTTP server
-│   ├── test-drawing-sync.mjs           # Automated drawing sync test suite
-│   ├── test-cursor-sync.mjs            # Automated live cursor test suite
-│   ├── test-collaborative-history.mjs  # Automated collaborative history test suite
+│   ├── test-drawing-sync.mjs           # Automated drawing sync test suite (11 tests)
+│   ├── test-cursor-sync.mjs            # Automated live cursor test suite (7 tests)
+│   ├── test-collaborative-history.mjs  # Automated history & undo/redo test suite (16 tests)
+│   ├── test-reconnect-sync.mjs         # Automated reconnect & offline sync test suite (16 tests)
 │   ├── package.json
 │   └── tsconfig.json
 │
@@ -372,3 +481,4 @@ mindforge/ (SyncDraw Workspace Root)
 ├── package.json
 └── README.md
 ```
+

@@ -62,6 +62,17 @@ SyncDraw is currently in active stage-by-stage development.
   - **Deterministic Canvas Reconstruction**: Replays active operations in chronological order on-demand, guaranteeing visual consistency across all connected clients with zero bitmap snapshots.
   - **Server-Authoritative Validation**: Validates operation payloads, enforces authoritative socket identity, rejects cross-author mutations, and prevents duplicates via `operationId` sets.
   - **Comprehensive State Hydration**: `SYNC_STATE` transmits both compiled strokes and canonical operation logs to newly joined and reconnected peers.
+- **Reconnection Reliability, Offline Queue & Safe Replay (Section 9)**:
+  - **Authoritative Connection State Machine**: Explicit 5-state client model (`connected`, `connecting`, `reconnecting`, `offline`, `disconnected`) reacting to transport drops, socket reconnect attempts, and browser `online`/`offline` lifecycle events.
+  - **Local-First Drawing Resilience**: Drawing, erasing, undo, redo, and clear remain 100% interactive while offline. Local mutations update the canvas immediately with zero latency.
+  - **Durable Client-Side Pending Operation Queue (`queue.ts`)**: Pending mutations are enqueued and persisted defensively to `localStorage` under `syncdraw:pending-operations:v1`.
+  - **Room & Session Isolation**: Persisted operations are strictly scoped by `roomId` and user display name, preventing any cross-room operation leaks.
+  - **Operation Acknowledgement Protocol (`OPERATION_ACK`)**: Direct sender-targeted acknowledgement confirming that an operation has passed validation and committed to canonical state.
+  - **Safe Reconnect Reconciliation**: On reconnect + `SYNC_STATE`, the client reconciles local pending operations against server canonical IDs. Already-canonical operations are purged from the queue; only missing unacknowledged operations are replayed.
+  - **Server Idempotency**: Duplicate operation IDs sent via retries or retransmissions are acknowledged safely as `ALREADY_CANONICAL` without duplicating room strokes or records.
+  - **Ephemeral Cursor Protection**: Live cursor coordinates (`CURSOR_MOVE`) are strictly ephemeral; they are never queued or saved to storage during offline periods.
+  - **Offline UI & Pending Counter**: Accessible status indicators (`● Connected`, `↻ Reconnecting...`, `⚠ Offline`) accompanied by a live pending changes pill (`3 changes pending` with `aria-live="polite"`).
+  - **In-Memory Room Reconnect Grace Period**: Empty rooms with drawing history are preserved for a 2-minute grace period before eviction, protecting users from state loss during brief network cuts.
 
 ---
 
@@ -70,8 +81,8 @@ SyncDraw is currently in active stage-by-stage development.
 The following features are planned for upcoming development sections:
 
 - **Geometric Shapes & Annotations** *(Planned)*: Rectangle, ellipse, arrow, and text annotation tools.
-- **Room State Persistence** *(Planned)*: Server-side room snapshot storage and historical action replay for late-joining clients.
-- **Offline Resilience & Operation Queue** *(Planned)*: Reconnection queue buffering drawing actions during network drops.
+- **Database & Cloud Room Persistence** *(Planned)*: Persistent database snapshot storage and historical action replay.
+- **Canvas Zoom, Pan & Infinite Workspace** *(Planned)*: Infinite viewport navigation and scaling.
 
 ---
 
@@ -174,6 +185,9 @@ npm run test:cursor -w server
 
 # Run automated collaborative history & undo/redo test suite (16 test cases)
 npm run test:history -w server
+
+# Run automated reconnect, offline queue & safe replay test suite (16 test cases)
+npm run test:reconnect -w server
 ```
 
 ---
