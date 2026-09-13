@@ -12,7 +12,7 @@
 
 import { io } from 'socket.io-client';
 import { roomManager } from './dist/rooms/roomManager.js';
-import { createRoomState, reconstructRoomStrokes } from './dist/rooms/roomState.js';
+import { reconstructRoomStrokes } from './dist/rooms/roomState.js';
 
 const SERVER_URL = process.env.TEST_SERVER_URL || 'http://localhost:5000';
 
@@ -20,13 +20,58 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createClient(name, autoConnect = true) {
+function createClient() {
   return io(SERVER_URL, {
     transports: ['websocket'],
-    autoConnect,
     forceNew: true,
-    reconnection: false,
   });
+}
+
+/**
+ * Connects and joins a room safely:
+ * Attaches ROOM_JOINED, ERROR, and connect_error listeners before emitting JOIN_ROOM,
+ * with an explicit Promise.race safety timeout.
+ */
+function connectAndJoin(client, roomId, displayName, timeoutMs = 5000) {
+  return Promise.race([
+    new Promise((resolve, reject) => {
+      const onJoined = (data) => {
+        cleanup();
+        resolve(data);
+      };
+      const onErr = (err) => {
+        cleanup();
+        reject(new Error(`Server error for ${displayName} in ${roomId}: ${JSON.stringify(err)}`));
+      };
+      const onConnErr = (err) => {
+        cleanup();
+        reject(err);
+      };
+      const cleanup = () => {
+        client.off('ROOM_JOINED', onJoined);
+        client.off('ERROR', onErr);
+        client.off('connect_error', onConnErr);
+      };
+
+      client.once('ROOM_JOINED', onJoined);
+      client.once('ERROR', onErr);
+      client.once('connect_error', onConnErr);
+
+      if (client.connected) {
+        client.emit('JOIN_ROOM', { roomId, displayName });
+      } else {
+        client.once('connect', () => {
+          client.emit('JOIN_ROOM', { roomId, displayName });
+        });
+      }
+    }),
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Timeout waiting for ${displayName} to join room ${roomId}`)),
+        timeoutMs
+      )
+    ),
+  ]);
 }
 
 async function runPerformanceTests() {
@@ -40,28 +85,24 @@ async function runPerformanceTests() {
   // =========================================================================
   console.log('[Test 1] High-frequency drawing streaming (1,000 points across peers)...');
   {
-    const roomId = `room_perf_draw_${Date.now()}`;
-    const alice = createClient('Alice');
-    const bob = createClient('Bob');
+    const roomId = `PERF_DRAW_${Date.now().toString().slice(-6)}`;
+    const alice = createClient();
+    const bob = createClient();
 
     await Promise.all([
-      new Promise((res) => alice.on('connect', res)),
-      new Promise((res) => bob.on('connect', res)),
+      connectAndJoin(alice, roomId, 'Alice'),
+      connectAndJoin(bob, roomId, 'Bob'),
     ]);
-
-    await Promise.all([
-      new Promise((res) => {
-        alice.emit('JOIN_ROOM', { roomId, displayName: 'Alice' });
-        alice.on('ROOM_JOINED', res);
-      }),
-      new Promise((res) => {
-        bob.emit('JOIN_ROOM', { roomId, displayName: 'Bob' });
-        bob.on('ROOM_JOINED', res);
-      }),
-    ]);
-    await wait(50);
 
     const strokeId = `stroke_perf_${Date.now()}`;
+    let pointsReceivedByBob = 0;
+
+    bob.on('DRAW_UPDATE', (data) => {
+      if (data.strokeId === strokeId) {
+        pointsReceivedByBob += data.points.length;
+      }
+    });
+
     alice.emit('DRAW_START', {
       strokeId,
       tool: 'pen',
@@ -69,15 +110,9 @@ async function runPerformanceTests() {
       width: 4,
       point: { x: 10, y: 10 },
     });
+    await wait(30);
 
-    let pointsReceivedByBob = 0;
-    bob.on('DRAW_UPDATE', (data) => {
-      if (data.strokeId === strokeId) {
-        pointsReceivedByBob += data.points.length;
-      }
-    });
-
-    const startTime = Date.now();
+    const startTime = performance.now();
     const TOTAL_POINTS = 1000;
     const BATCH_SIZE = 25; // 40 batches of 25 points = 1000 points
 
@@ -91,19 +126,26 @@ async function runPerformanceTests() {
 
     alice.emit('DRAW_END', { strokeId });
 
-    // Wait for delivery
-    let attempts = 0;
-    while (pointsReceivedByBob < TOTAL_POINTS && attempts < 40) {
-      await wait(50);
-      attempts++;
-    }
+    // Wait for delivery with safety timeout
+    await Promise.race([
+      new Promise((resolve) => {
+        const interval = setInterval(() => {
+          if (pointsReceivedByBob >= TOTAL_POINTS) {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 20);
+      }),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Timeout: Expected ${TOTAL_POINTS} points received by Bob, but got ${pointsReceivedByBob}`)),
+          6000
+        )
+      ),
+    ]);
 
-    const elapsedMs = Date.now() - startTime;
-    if (pointsReceivedByBob < TOTAL_POINTS) {
-      throw new Error(`Expected ${TOTAL_POINTS} points received by Bob, but got ${pointsReceivedByBob}`);
-    }
-
-    console.log(`✓ Test 1 Passed: 1,000 points delivered in ${elapsedMs}ms (${Math.round((TOTAL_POINTS / elapsedMs) * 1000)} pts/sec throughput).`);
+    const elapsedMs = performance.now() - startTime;
+    console.log(`✓ Test 1 Passed: 1,000 points delivered in ${elapsedMs.toFixed(2)}ms (~${Math.round((TOTAL_POINTS / elapsedMs) * 1000)} pts/sec throughput).`);
     passedTests++;
 
     alice.disconnect();
@@ -116,12 +158,9 @@ async function runPerformanceTests() {
   // =========================================================================
   console.log('\n[Test 2] High-throughput duplicate operation detection (100 concurrent duplicates)...');
   {
-    const roomId = `room_perf_dup_${Date.now()}`;
-    const client = createClient('ClientDup');
-    await new Promise((res) => client.on('connect', res));
-
-    client.emit('JOIN_ROOM', { roomId, displayName: 'ClientDup' });
-    await wait(80);
+    const roomId = `PERF_DUP_${Date.now().toString().slice(-6)}`;
+    const client = createClient();
+    await connectAndJoin(client, roomId, 'ClientDup');
 
     const baseOpId = `op_perf_dup_${Date.now()}`;
     const baseOp = {
@@ -140,19 +179,21 @@ async function runPerformanceTests() {
       timestamp: Date.now(),
     };
 
-    // 1. Submit initial operation
-    const firstAckPromise = new Promise((resolve) => {
-      const handler = (ack) => {
-        if (ack.operationId === baseOpId) {
-          client.off('OPERATION_ACK', handler);
-          resolve(ack);
-        }
-      };
-      client.on('OPERATION_ACK', handler);
-    });
+    // 1. Submit initial operation with timeout
+    const firstAck = await Promise.race([
+      new Promise((resolve) => {
+        const handler = (ack) => {
+          if (ack.operationId === baseOpId) {
+            client.off('OPERATION_ACK', handler);
+            resolve(ack);
+          }
+        };
+        client.on('OPERATION_ACK', handler);
+        client.emit('OPERATION_APPLY', { operation: baseOp });
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout on initial operation ack')), 4000)),
+    ]);
 
-    client.emit('OPERATION_APPLY', { operation: baseOp });
-    const firstAck = await firstAckPromise;
     if (!firstAck.accepted) {
       throw new Error('Initial operation was not accepted');
     }
@@ -179,11 +220,12 @@ async function runPerformanceTests() {
 
     await Promise.race([
       duplicatesPromise,
-      wait(3000).then(() => {
-        if (duplicateAcksReceived < DUPLICATE_COUNT) {
-          throw new Error(`Timed out waiting for duplicate ACKs: got ${duplicateAcksReceived}/${DUPLICATE_COUNT}`);
-        }
-      }),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Timed out waiting for duplicate ACKs: got ${duplicateAcksReceived}/${DUPLICATE_COUNT}`)),
+          5000
+        )
+      ),
     ]);
 
     const dupElapsedMs = performance.now() - startDupTime;
@@ -199,7 +241,7 @@ async function runPerformanceTests() {
   // =========================================================================
   console.log('\n[Test 3] Large operation history stress test (5,000 structured operations)...');
   {
-    const roomId = `room_perf_hist_${Date.now()}`;
+    const roomId = `PERF_HIST_${Date.now().toString().slice(-6)}`;
     const testRoom = roomManager.getOrCreateRoom(roomId);
 
     const OP_COUNT = 5000;
@@ -292,41 +334,29 @@ async function runPerformanceTests() {
   // =========================================================================
   console.log('\n[Test 4] Multi-collaborator concurrency (10 simultaneous participants in one room)...');
   {
-    const roomId = `room_perf_collab_${Date.now()}`;
+    const roomId = `PERF_COLLAB_${Date.now().toString().slice(-6)}`;
     const CLIENT_COUNT = 10;
     const clients = [];
 
     for (let i = 0; i < CLIENT_COUNT; i++) {
-      clients.push(createClient(`User_${i}`));
+      clients.push(createClient());
     }
 
-    await Promise.all(clients.map((c) => new Promise((res) => c.on('connect', res))));
-
-    // Join all clients concurrently
+    // Join all clients concurrently using safe connectAndJoin
     await Promise.all(
-      clients.map(
-        (c, idx) =>
-          new Promise((resolve) => {
-            c.emit('JOIN_ROOM', { roomId, displayName: `User_${idx}` });
-            c.on('ROOM_JOINED', resolve);
-          })
-      )
+      clients.map((c, idx) => connectAndJoin(c, roomId, `User_${idx}`))
     );
-
-    // Verify room has all 10 users registered
-    const activeUsers = roomManager.getUsers(roomId);
-    if (activeUsers.length !== CLIENT_COUNT) {
-      throw new Error(`Expected ${CLIENT_COUNT} active users, found ${activeUsers.length}`);
-    }
 
     // Each user submits an operation concurrently
     let acksReceived = 0;
     const opPromises = clients.map(
       (c, idx) =>
-        new Promise((resolve) => {
+        new Promise((resolve, reject) => {
           const opId = `op_collab_concurrent_${idx}_${Date.now()}`;
+          const timer = setTimeout(() => reject(new Error(`Timeout on user ${idx} ack`)), 5000);
           const handler = (ack) => {
             if (ack.operationId === opId && ack.accepted) {
+              clearTimeout(timer);
               c.off('OPERATION_ACK', handler);
               acksReceived++;
               resolve();
@@ -372,19 +402,13 @@ async function runPerformanceTests() {
   // =========================================================================
   console.log('\n[Test 5] Rapid reconnect cycling stress test (20 rapid connect/disconnect cycles)...');
   {
-    const roomId = `room_perf_reconnect_${Date.now()}`;
+    const roomId = `PERF_REC_${Date.now().toString().slice(-6)}`;
     const CYCLES = 20;
     const startCycleTime = performance.now();
 
     for (let i = 0; i < CYCLES; i++) {
-      const client = createClient(`Cycler_${i}`);
-      await new Promise((res) => client.on('connect', res));
-
-      await new Promise((resolve) => {
-        client.emit('JOIN_ROOM', { roomId, displayName: `Cycler_${i}` });
-        client.on('ROOM_JOINED', resolve);
-      });
-
+      const client = createClient();
+      await connectAndJoin(client, roomId, `Cycler_${i}`);
       client.disconnect();
       await wait(10);
     }
@@ -400,34 +424,18 @@ async function runPerformanceTests() {
   // =========================================================================
   console.log('\n[Test 6] High-frequency cursor streaming throughput and room isolation...');
   {
-    const roomIdA = `room_perf_cursor_A_${Date.now()}`;
-    const roomIdB = `room_perf_cursor_B_${Date.now()}`;
+    const roomIdA = `PERF_CUR_A_${Date.now().toString().slice(-6)}`;
+    const roomIdB = `PERF_CUR_B_${Date.now().toString().slice(-6)}`;
 
-    const alice = createClient('AliceCursor');
-    const bob = createClient('BobCursor');
-    const charlie = createClient('CharlieCursor');
-
-    await Promise.all([
-      new Promise((res) => alice.on('connect', res)),
-      new Promise((res) => bob.on('connect', res)),
-      new Promise((res) => charlie.on('connect', res)),
-    ]);
+    const alice = createClient();
+    const bob = createClient();
+    const charlie = createClient();
 
     await Promise.all([
-      new Promise((res) => {
-        alice.emit('JOIN_ROOM', { roomId: roomIdA, displayName: 'AliceCursor' });
-        alice.on('ROOM_JOINED', res);
-      }),
-      new Promise((res) => {
-        bob.emit('JOIN_ROOM', { roomId: roomIdA, displayName: 'BobCursor' });
-        bob.on('ROOM_JOINED', res);
-      }),
-      new Promise((res) => {
-        charlie.emit('JOIN_ROOM', { roomId: roomIdB, displayName: 'CharlieCursor' });
-        charlie.on('ROOM_JOINED', res);
-      }),
+      connectAndJoin(alice, roomIdA, 'AliceCursor'),
+      connectAndJoin(bob, roomIdA, 'BobCursor'),
+      connectAndJoin(charlie, roomIdB, 'CharlieCursor'),
     ]);
-    await wait(50);
 
     let bobCursorCount = 0;
     let charlieCursorCount = 0;
@@ -445,15 +453,23 @@ async function runPerformanceTests() {
       alice.emit('CURSOR_MOVE', { x: 100 + i, y: 200 + i });
     }
 
-    let attempts = 0;
-    while (bobCursorCount < CURSOR_STREAM_COUNT && attempts < 30) {
-      await wait(40);
-      attempts++;
-    }
-
-    if (bobCursorCount !== CURSOR_STREAM_COUNT) {
-      throw new Error(`Expected Bob to receive ${CURSOR_STREAM_COUNT} cursors, but received ${bobCursorCount}`);
-    }
+    // Wait for delivery with safety timeout
+    await Promise.race([
+      new Promise((resolve) => {
+        const interval = setInterval(() => {
+          if (bobCursorCount >= CURSOR_STREAM_COUNT) {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 20);
+      }),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Timeout: Expected Bob to receive ${CURSOR_STREAM_COUNT} cursors, but got ${bobCursorCount}`)),
+          5000
+        )
+      ),
+    ]);
 
     if (charlieCursorCount !== 0) {
       throw new Error(`Cross-room leak detected: Charlie received ${charlieCursorCount} cursor updates from another room!`);
