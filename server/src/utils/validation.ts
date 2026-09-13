@@ -6,7 +6,6 @@ import type {
   EraseStrokesPayload,
   CursorMovePayload,
   OperationApplyPayload,
-  CollaborativeOperation,
   Stroke,
   Point,
 } from '../types/collaboration.js';
