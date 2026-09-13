@@ -5,6 +5,7 @@ export interface PointerControllerCallbacks {
   onStrokeStart: (point: Point) => void;
   onStrokeMove: (point: Point) => void;
   onStrokeEnd: () => void;
+  onCursorMove?: (point: Point) => void;
   getDimensions: () => { width: number; height: number };
 }
 
@@ -34,14 +35,19 @@ export function attachPointerController(
 
     const dims = callbacks.getDimensions();
     const point = clientToCanvasCoordinates(e, canvas, dims.width, dims.height);
+    callbacks.onCursorMove?.(point);
     callbacks.onStrokeStart(point);
   };
 
   const handlePointerMove = (e: PointerEvent) => {
-    if (!isDrawing || e.pointerId !== activePointerId) return;
-
     const dims = callbacks.getDimensions();
     const point = clientToCanvasCoordinates(e, canvas, dims.width, dims.height);
+
+    // Track cursor location continuously over canvas (with or without drawing)
+    callbacks.onCursorMove?.(point);
+
+    if (!isDrawing || e.pointerId !== activePointerId) return;
+
     callbacks.onStrokeMove(point);
   };
 
