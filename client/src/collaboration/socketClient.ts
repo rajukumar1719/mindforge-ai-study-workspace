@@ -14,6 +14,7 @@ import type {
   EraseStrokesPayload,
   EraseStrokesData,
   SyncStateData,
+  CursorUpdateData,
 } from './types';
 import type { Point } from '../canvas';
 
@@ -31,6 +32,7 @@ export interface CollaborationClientOptions {
   onDrawUpdate?: (data: DrawUpdateData) => void;
   onDrawEnd?: (data: DrawEndData) => void;
   onEraseStrokes?: (data: EraseStrokesData) => void;
+  onCursorUpdate?: (data: CursorUpdateData) => void;
 }
 
 export interface CollaborationClient {
@@ -40,6 +42,7 @@ export interface CollaborationClient {
   queueStrokePoint: (strokeId: string, point: Point) => void;
   sendDrawEnd: (strokeId: string) => void;
   sendEraseStrokes: (payload: EraseStrokesPayload) => void;
+  sendCursorMove: (x: number, y: number) => void;
 }
 
 /**
@@ -142,6 +145,35 @@ export function createCollaborationClient(
     socket.emit('ERASE_STROKES', payload);
   };
 
+  // Throttling state for high-frequency cursor movements (~30ms = ~33 updates/sec)
+  let pendingCursorPoint: { x: number; y: number } | null = null;
+  let lastSentCursorPoint: { x: number; y: number } | null = null;
+  let cursorThrottleTimer: number | null = null;
+
+  const flushCursorMove = () => {
+    cursorThrottleTimer = null;
+    if (!pendingCursorPoint) return;
+
+    if (lastSentCursorPoint) {
+      const dx = pendingCursorPoint.x - lastSentCursorPoint.x;
+      const dy = pendingCursorPoint.y - lastSentCursorPoint.y;
+      if (dx * dx + dy * dy < 0.25) {
+        return;
+      }
+    }
+
+    lastSentCursorPoint = pendingCursorPoint;
+    socket.emit('CURSOR_MOVE', pendingCursorPoint);
+  };
+
+  const sendCursorMove = (x: number, y: number) => {
+    pendingCursorPoint = { x, y };
+
+    if (cursorThrottleTimer === null) {
+      cursorThrottleTimer = window.setTimeout(flushCursorMove, 30);
+    }
+  };
+
   // 1. Connection lifecycle handlers
   const handleConnect = () => {
     options.onStatusChange('connected');
@@ -210,6 +242,10 @@ export function createCollaborationClient(
     options.onEraseStrokes?.(data);
   };
 
+  const handleCursorUpdate = (data: CursorUpdateData) => {
+    options.onCursorUpdate?.(data);
+  };
+
   // Register listeners cleanly
   socket.on('connect', handleConnect);
   socket.on('disconnect', handleDisconnect);
@@ -226,6 +262,7 @@ export function createCollaborationClient(
   socket.on('DRAW_UPDATE', handleDrawUpdate);
   socket.on('DRAW_END', handleDrawEnd);
   socket.on('ERASE_STROKES', handleEraseStrokes);
+  socket.on('CURSOR_UPDATE', handleCursorUpdate);
 
   return {
     socket,
@@ -233,10 +270,16 @@ export function createCollaborationClient(
     queueStrokePoint,
     sendDrawEnd,
     sendEraseStrokes,
+    sendCursorMove,
     disconnect: () => {
       if (batchTimer !== null) {
         clearTimeout(batchTimer);
         batchTimer = null;
+      }
+
+      if (cursorThrottleTimer !== null) {
+        clearTimeout(cursorThrottleTimer);
+        cursorThrottleTimer = null;
       }
 
       socket.off('connect', handleConnect);
@@ -254,6 +297,7 @@ export function createCollaborationClient(
       socket.off('DRAW_UPDATE', handleDrawUpdate);
       socket.off('DRAW_END', handleDrawEnd);
       socket.off('ERASE_STROKES', handleEraseStrokes);
+      socket.off('CURSOR_UPDATE', handleCursorUpdate);
 
       socket.disconnect();
     },
