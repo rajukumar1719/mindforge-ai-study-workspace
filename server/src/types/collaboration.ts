@@ -32,6 +32,8 @@ export interface Room {
   users: Map<string, Collaborator>;
   strokes: Stroke[];
   activeStrokes: Map<string, Stroke>; // In-flight strokes keyed by strokeId
+  operations: OperationRecord[];
+  appliedOperationIds: Set<string>;
   createdAt: number;
 }
 
@@ -97,8 +99,67 @@ export interface EraseStrokesData extends EraseStrokesPayload {
   userId: string;
 }
 
+export type CollaborativeOperationType =
+  | 'add-stroke'
+  | 'erase-strokes'
+  | 'clear-canvas'
+  | 'undo'
+  | 'redo';
+
+export interface BaseCollaborativeOperation {
+  operationId: string;
+  type: CollaborativeOperationType;
+  userId: string;
+  timestamp: number;
+}
+
+export interface AddStrokeOperation extends BaseCollaborativeOperation {
+  type: 'add-stroke';
+  stroke: Stroke;
+}
+
+export interface EraseStrokesOperation extends BaseCollaborativeOperation {
+  type: 'erase-strokes';
+  strokeIds: string[];
+}
+
+export interface ClearCanvasOperation extends BaseCollaborativeOperation {
+  type: 'clear-canvas';
+}
+
+export interface UndoOperation extends BaseCollaborativeOperation {
+  type: 'undo';
+  targetOperationId: string;
+}
+
+export interface RedoOperation extends BaseCollaborativeOperation {
+  type: 'redo';
+  targetOperationId: string;
+}
+
+export type CollaborativeOperation =
+  | AddStrokeOperation
+  | EraseStrokesOperation
+  | ClearCanvasOperation
+  | UndoOperation
+  | RedoOperation;
+
+export interface OperationRecord {
+  operation: CollaborativeOperation;
+  active: boolean;
+}
+
+export interface OperationApplyPayload {
+  operation: CollaborativeOperation;
+}
+
+export interface OperationAppliedData {
+  operation: CollaborativeOperation;
+}
+
 export interface SyncStateData {
   strokes: Stroke[];
+  operations?: OperationRecord[];
 }
 
 export interface CursorMovePayload {
@@ -120,6 +181,7 @@ export interface ClientToServerEvents {
   DRAW_END: (payload: unknown) => void;
   ERASE_STROKES: (payload: unknown) => void;
   CURSOR_MOVE: (payload: unknown) => void;
+  OPERATION_APPLY: (payload: unknown) => void;
 }
 
 export interface ServerToClientEvents {
@@ -133,6 +195,7 @@ export interface ServerToClientEvents {
   DRAW_END: (data: DrawEndData) => void;
   ERASE_STROKES: (data: EraseStrokesData) => void;
   CURSOR_UPDATE: (data: CursorUpdateData) => void;
+  OPERATION_APPLIED: (data: OperationAppliedData) => void;
 }
 
 export interface SocketData {
