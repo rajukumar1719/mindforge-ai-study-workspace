@@ -81,10 +81,13 @@ export const RoomHeader: React.FC<RoomHeaderProps> = ({
             <div className="text-[11px] text-slate-400">Collaborator</div>
           </div>
 
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 border border-amber-200 text-amber-800">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-            <span className="hidden sm:inline">Connection:</span>
-            <span>Not connected yet</span>
+          <div
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 border border-emerald-200 text-emerald-800"
+            title="Drawing locally on your device. Real-time WebSocket collaboration is coming in Section 4."
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span className="hidden sm:inline">Engine:</span>
+            <span>Local mode</span>
           </div>
 
           <Link

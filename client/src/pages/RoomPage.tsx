@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { RoomHeader } from '../components/RoomHeader';
+import { Canvas } from '../components/canvas/Canvas';
+import { Toolbar } from '../components/canvas/Toolbar';
 import { normalizeRoomId, isValidRoomId } from '../utils/roomId';
 import { getUserSession, setUserSession } from '../utils/storage';
 import type { UserSession } from '../types';
+import type { Stroke, CanvasSettings } from '../canvas';
 
 export const RoomPage: React.FC = () => {
   const { roomId: rawRoomId } = useParams<{ roomId: string }>();
@@ -13,6 +16,16 @@ export const RoomPage: React.FC = () => {
   const [session, setSession] = useState<UserSession | null>(() => getUserSession());
   const [directJoinName, setDirectJoinName] = useState<string>('');
   const [joinError, setJoinError] = useState<string | null>(null);
+
+  // Drawing state: Canonical collection of finalized strokes
+  const [strokes, setStrokes] = useState<Stroke[]>([]);
+
+  // Canvas settings
+  const [settings, setSettings] = useState<CanvasSettings>({
+    tool: 'pen',
+    color: '#111111',
+    width: 4,
+  });
 
   const displayName = session?.displayName || '';
   const hasSession = Boolean(session && session.displayName);
@@ -36,6 +49,10 @@ export const RoomPage: React.FC = () => {
     setJoinError(null);
     setUserSession(trimmed);
     setSession({ displayName: trimmed });
+  };
+
+  const handleStrokeComplete = (newStroke: Stroke) => {
+    setStrokes((prev) => [...prev, newStroke]);
   };
 
   // Malformed Room ID handling
@@ -130,55 +147,26 @@ export const RoomPage: React.FC = () => {
     );
   }
 
-  // Active Room Page Placeholder
+  // Active Interactive Drawing Workspace
   return (
-    <div className="min-h-screen flex flex-col bg-slate-100">
+    <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100">
       {/* Room Header */}
       <RoomHeader roomId={roomId} displayName={displayName} />
 
-      {/* Canvas Workspace Shell (Prepared for Section 3 Drawing Engine) */}
-      <main className="flex-1 flex flex-col relative overflow-hidden bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:20px_20px] bg-slate-100">
-        {/* Placeholder Workspace Notice */}
-        <div className="m-auto max-w-lg w-full p-6 sm:p-8 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl text-center space-y-6">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200/80 text-indigo-600 flex items-center justify-center mx-auto shadow-2xs">
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
-          </div>
+      {/* Drawing Canvas Area */}
+      <main className="relative flex-1 w-full h-full flex flex-col overflow-hidden">
+        <Canvas
+          userId={displayName}
+          settings={settings}
+          strokes={strokes}
+          onStrokeComplete={handleStrokeComplete}
+        />
 
-          <div className="space-y-2">
-            <h2 className="text-xl font-bold tracking-tight text-slate-900">
-              Collaborative canvas coming online...
-            </h2>
-            <p className="text-xs text-slate-500 leading-relaxed max-w-sm mx-auto">
-              You are in room <strong className="font-mono text-slate-800">{roomId}</strong>. The canvas engine and real-time collaboration layer are in active development for upcoming sections.
-            </p>
-          </div>
-
-          {/* Room Parameters Card */}
-          <div className="grid grid-cols-2 gap-3 text-left p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-            <div>
-              <span className="text-slate-400 block text-[11px]">Room Identifier</span>
-              <span className="font-mono font-bold text-slate-800">{roomId}</span>
-            </div>
-            <div>
-              <span className="text-slate-400 block text-[11px]">Participant Name</span>
-              <span className="font-semibold text-slate-800">{displayName}</span>
-            </div>
-            <div className="col-span-2 pt-2 border-t border-slate-200/60 flex items-center justify-between">
-              <span className="text-slate-400 text-[11px]">Connection Status</span>
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                Not connected yet
-              </span>
-            </div>
-          </div>
-
-          {/* Development Notice */}
-          <div className="text-[11px] text-slate-400 border-t border-slate-100 pt-4">
-            Section 2 complete. Section 3 will introduce the native HTML5 drawing engine, followed by WebSocket synchronization.
-          </div>
-        </div>
+        {/* Floating Toolbar */}
+        <Toolbar
+          settings={settings}
+          onSettingsChange={setSettings}
+        />
       </main>
     </div>
   );
