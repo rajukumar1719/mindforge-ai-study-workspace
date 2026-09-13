@@ -1,4 +1,4 @@
-import type { Stroke, Point } from './types';
+import type { Stroke, Point, DrawingTool } from './types';
 
 /**
  * Clears the canvas drawing surface across logical bounds.
@@ -12,7 +12,8 @@ export function clearCanvas(
 }
 
 /**
- * Renders a single stroke onto the 2D canvas context using quadratic Bézier curve smoothing.
+ * Renders a single stroke onto the 2D canvas context using tool-appropriate styles
+ * and quadratic Bézier curve smoothing.
  */
 export function renderStroke(
   ctx: CanvasRenderingContext2D,
@@ -22,6 +23,14 @@ export function renderStroke(
   if (!points || points.length === 0) return;
 
   ctx.save();
+
+  // Configure tool-specific styling
+  if (stroke.tool === 'highlighter') {
+    ctx.globalAlpha = 0.35;
+  } else {
+    ctx.globalAlpha = 1.0;
+  }
+
   ctx.strokeStyle = stroke.color;
   ctx.fillStyle = stroke.color;
   ctx.lineWidth = stroke.width;
@@ -95,12 +104,20 @@ export function renderIncrementalSegment(
   ctx: CanvasRenderingContext2D,
   points: Point[],
   color: string,
-  width: number
+  width: number,
+  tool: DrawingTool = 'pen'
 ): void {
   const len = points.length;
   if (len < 2) return;
 
   ctx.save();
+
+  if (tool === 'highlighter') {
+    ctx.globalAlpha = 0.35;
+  } else {
+    ctx.globalAlpha = 1.0;
+  }
+
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
   ctx.lineWidth = width;

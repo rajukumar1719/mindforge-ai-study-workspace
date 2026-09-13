@@ -9,7 +9,7 @@ export interface Point {
   pressure?: number;
 }
 
-export type DrawingTool = 'pen';
+export type DrawingTool = 'pen' | 'highlighter' | 'eraser';
 
 export interface Stroke {
   id: string;
@@ -32,5 +32,32 @@ export interface CanvasSettings {
   color: string;
   width: number;
 }
+
+export const TOOL_DEFAULT_WIDTHS: Record<DrawingTool, number> = {
+  pen: 4,
+  highlighter: 16,
+  eraser: 20,
+};
+
+// Logical Reversible Operations for Undo / Redo
+export interface AddStrokeOperation {
+  type: 'add-stroke';
+  stroke: Stroke;
+}
+
+export interface EraseStrokesOperation {
+  type: 'erase-strokes';
+  strokes: { stroke: Stroke; index: number }[];
+}
+
+export interface ClearCanvasOperation {
+  type: 'clear-canvas';
+  strokes: Stroke[];
+}
+
+export type CanvasOperation =
+  | AddStrokeOperation
+  | EraseStrokesOperation
+  | ClearCanvasOperation;
 
 export type StrokeListener = (stroke: Stroke) => void;
