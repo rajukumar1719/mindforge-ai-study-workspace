@@ -266,6 +266,18 @@ export function initSocketServer(
 
       const validation = validateOperationApplyPayload(rawPayload);
       if (!validation.valid || !validation.data) {
+        const rawOp =
+          typeof rawPayload === 'object' && rawPayload !== null && 'operation' in rawPayload
+            ? (rawPayload as { operation?: { operationId?: string } }).operation
+            : undefined;
+        const opId = rawOp?.operationId || '';
+
+        socket.emit('OPERATION_ACK', {
+          operationId: opId,
+          accepted: false,
+          reason: validation.error?.message || 'Invalid operation payload.',
+        });
+
         socket.emit('ERROR', validation.error || {
           code: 'INVALID_OPERATION_PAYLOAD',
           message: 'Invalid operation payload.',
@@ -278,13 +290,39 @@ export function initSocketServer(
       operation.userId = user.id;
 
       const result = roomManager.applyCollaborativeOperation(roomId, operation);
+
+      // Idempotent duplicate check: already canonical
+      if (result.duplicate) {
+        socket.emit('OPERATION_ACK', {
+          operationId: operation.operationId,
+          accepted: true,
+          reason: 'ALREADY_CANONICAL',
+        });
+        socket.emit('ERROR', {
+          code: 'DUPLICATE_OPERATION',
+          message: `Operation ${operation.operationId} has already been applied.`,
+        });
+        return;
+      }
+
       if (!result.success) {
+        socket.emit('OPERATION_ACK', {
+          operationId: operation.operationId,
+          accepted: false,
+          reason: result.error?.message || 'Operation could not be applied.',
+        });
         socket.emit('ERROR', result.error || {
           code: 'OPERATION_REJECTED',
           message: 'Operation could not be applied.',
         });
         return;
       }
+
+      // Authoritatively acknowledge the applying socket
+      socket.emit('OPERATION_ACK', {
+        operationId: operation.operationId,
+        accepted: true,
+      });
 
       // Broadcast the accepted canonical operation to all room participants
       io.to(roomId).emit('OPERATION_APPLIED', {

@@ -184,13 +184,16 @@ export class RoomManager {
   public applyCollaborativeOperation(
     roomId: string,
     op: CollaborativeOperation
-  ): { success: boolean; record?: OperationRecord; error?: { code: string; message: string } } {
+  ): { success: boolean; duplicate?: boolean; record?: OperationRecord; error?: { code: string; message: string } } {
     const room = this.getOrCreateRoom(roomId);
 
-    // Reject duplicate operationId
+    // Idempotent duplicate check: return duplicate flag and existing record
     if (room.appliedOperationIds.has(op.operationId)) {
+      const existingRecord = room.operations.find((r) => r.operation.operationId === op.operationId);
       return {
         success: false,
+        duplicate: true,
+        record: existingRecord,
         error: { code: 'DUPLICATE_OPERATION', message: `Operation ${op.operationId} has already been applied.` },
       };
     }

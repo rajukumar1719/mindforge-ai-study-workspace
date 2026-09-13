@@ -7,7 +7,14 @@ export interface Collaborator {
   joinedAt: number;
 }
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
+export type ConnectionState =
+  | 'connected'
+  | 'connecting'
+  | 'reconnecting'
+  | 'offline'
+  | 'disconnected';
+
+export type ConnectionStatus = ConnectionState;
 
 export interface RoomJoinedData {
   roomId: string;
@@ -151,6 +158,12 @@ export interface ClientToServerEvents {
   OPERATION_APPLY: (payload: OperationApplyPayload) => void;
 }
 
+export interface OperationAckData {
+  operationId: string;
+  accepted: boolean;
+  reason?: string;
+}
+
 export interface ServerToClientEvents {
   ROOM_JOINED: (data: RoomJoinedData) => void;
   USER_JOINED: (data: UserJoinedData) => void;
@@ -163,4 +176,5 @@ export interface ServerToClientEvents {
   ERASE_STROKES: (data: EraseStrokesData) => void;
   CURSOR_UPDATE: (data: CursorUpdateData) => void;
   OPERATION_APPLIED: (data: OperationAppliedData) => void;
+  OPERATION_ACK: (data: OperationAckData) => void;
 }
