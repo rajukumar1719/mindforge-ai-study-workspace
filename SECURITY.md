@@ -61,7 +61,7 @@ Every client-originated Socket.IO event is validated before processing. TypeScri
 
 ## 4. Rate Limiting & Flood Protection
 
-High-frequency WebSocket events are protected via an $\mathcal{O}(1)$ in-memory token-bucket rate limiter per socket ([rateLimiter.ts](file:///c:/Users/tester/Downloads/MindForge-SDE-Assignment/mindforge/server/src/security/rateLimiter.ts)):
+High-frequency WebSocket events are protected via an $\mathcal{O}(1)$ in-memory token-bucket rate limiter per socket ([server/src/security/rateLimiter.ts](server/src/security/rateLimiter.ts)):
 
 | Protected Event | Token Capacity (Burst) | Continuous Refill Rate | Behavior on Limit Exceeded |
 |---|:---:|:---:|---|
