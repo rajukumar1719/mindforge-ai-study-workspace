@@ -89,6 +89,13 @@ SyncDraw is currently in active stage-by-stage development.
   - **HTTP & Gateway Defense**: Disabled `X-Powered-By`; enforced defensive HTTP security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-XSS-Protection`, COOP, CORP, API CSP); hardened multi-origin CORS verification.
   - **Client Offline Storage Quota Protection**: Enforces 500-record cap on browser `localStorage` offline queues (`MAX_PENDING_OPERATIONS = 500`) with defensive error recovery on `QuotaExceededError`.
   - **Automated Security Test Suite**: 22 automated attack and abuse test scenarios (`npm run test:security -w server`) covering validation, authorization, rate limiting, and room isolation.
+- **UI/UX & Responsive Polish (Section 12)**:
+  - **Authentic Collaborative Canvas Hero & Mockup**: Interactive landing page with vector whiteboard preview, highlighter layer, simulated collaborator cursor, active floating toolbar, and live capability statuses.
+  - **Accessible ErrorBoundary**: Production React ErrorBoundary wrapping root routes, catching unexpected render anomalies with friendly fallback and recovery actions while keeping internal stack details safe.
+  - **Touch & Mobile Optimized Floating Toolbar**: Minimum 40px touch targets, platform-aware keyboard tooltips (`⌘+Z` on Mac/iOS, `Ctrl+Z` on Windows/Linux), smooth horizontal momentum scrolling, and high-contrast active tool states.
+  - **Collaborative Clear Confirmation**: Unambiguous modal dialog ("Clear Canvas for Everyone?") explicitly informing users of multi-user canvas impact before clearing, while noting author-scoped undo recovery.
+  - **Polished Collaborator Presence & Status**: Dynamic SVG status icons for connecting, reconnecting, and offline states; collaborator initials avatars with stable palette colors and `+N` overflow pill.
+  - **Keyboard Shortcuts Cheat Sheet**: Global shortcuts matrix and architectural transparency notice in the landing page footer.
 
 ---
 
