@@ -37,22 +37,36 @@ export const PresenceBadge: React.FC<PresenceBadgeProps> = ({
         onClick={() => setIsOpen((prev) => !prev)}
         aria-haspopup="true"
         aria-expanded={isOpen}
-        title="View active room collaborators"
-        className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 shadow-2xs transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        aria-label={`${count} ${count === 1 ? 'collaborator' : 'collaborators'} online. Click to view roster.`}
+        title={`${count} ${count === 1 ? 'collaborator' : 'collaborators'} online (click to view roster)`}
+        className="inline-flex items-center gap-2 px-2 py-1 rounded-full text-xs font-semibold bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 shadow-2xs transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500"
       >
-        {/* Overlapping Color Dots Preview */}
+        {/* Overlapping Collaborator Avatars with Initials & Overflow */}
         <div className="flex -space-x-1.5 overflow-hidden py-0.5">
-          {collaborators.slice(0, 3).map((c) => (
+          {collaborators.slice(0, 3).map((c) => {
+            const initial = c.name ? c.name.charAt(0).toUpperCase() : '?';
+            return (
+              <span
+                key={c.id}
+                className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold text-white ring-2 ring-white shadow-2xs shrink-0"
+                style={{ backgroundColor: c.color }}
+                title={c.name}
+              >
+                {initial}
+              </span>
+            );
+          })}
+          {collaborators.length > 3 && (
             <span
-              key={c.id}
-              className="inline-block w-3.5 h-3.5 rounded-full ring-2 ring-white shadow-2xs"
-              style={{ backgroundColor: c.color }}
-              title={c.name}
-            />
-          ))}
+              className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold bg-slate-100 border border-slate-300 text-slate-700 ring-2 ring-white shadow-2xs shrink-0"
+              title={`${collaborators.length - 3} more collaborators`}
+            >
+              +{collaborators.length - 3}
+            </span>
+          )}
         </div>
 
-        <span>
+        <span className="hidden sm:inline">
           {count} {count === 1 ? 'collaborator' : 'collaborators'}
         </span>
 

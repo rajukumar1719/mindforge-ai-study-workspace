@@ -12,10 +12,10 @@ export const Hero: React.FC<HeroProps> = ({
   return (
     <section className="pt-16 pb-12 sm:pt-24 sm:pb-16 text-center px-4 sm:px-6">
       <div className="max-w-3xl mx-auto space-y-6">
-        {/* Stage Badge */}
+        {/* Product Capabilities Badge */}
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-200/80 text-indigo-700 text-xs font-semibold tracking-wide">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 animate-pulse" />
-          <span>Section 2 • Landing Page & Room Entry Flow</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span>Real-Time Collaborative Whiteboard</span>
         </div>
 
         {/* Headline */}

@@ -11,10 +11,10 @@ interface FeatureItem {
 export const FeatureSection: React.FC = () => {
   const features: FeatureItem[] = [
     {
-      title: 'Real-Time Collaboration',
-      tagline: 'Work together on the same canvas.',
-      description: 'Low-latency state broadcasting synchronizes drawing actions across all connected participants.',
-      status: 'Planned',
+      title: 'Real-Time Vector Sync',
+      tagline: 'Draw together with zero noticeable latency.',
+      description: 'Zero-latency local rendering paired with batched vector stroke broadcasting synchronizes pen, highlighter, and eraser smoothly across peers.',
+      status: 'Available',
       icon: (
         <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -22,10 +22,10 @@ export const FeatureSection: React.FC = () => {
       ),
     },
     {
-      title: 'Live Presence',
-      tagline: 'See who is currently in the room.',
-      description: 'Dynamic participant awareness displaying teammate names, active status, and coordinated cursor positions.',
-      status: 'Planned',
+      title: 'Live Cursors & Presence',
+      tagline: 'See who is sketching in the room.',
+      description: 'Real-time collaborative cursors with GPU compositor acceleration, stable participant identity colors, and dynamic presence rosters.',
+      status: 'Available',
       icon: (
         <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
@@ -33,24 +33,24 @@ export const FeatureSection: React.FC = () => {
       ),
     },
     {
-      title: 'Fast Canvas',
-      tagline: 'Built around efficient canvas rendering.',
-      description: 'Native HTML5 Canvas 2D engine engineered for smooth 60fps freehand paths, geometric shapes, and instant redraws.',
-      status: 'Planned',
+      title: 'Collaborative Undo & History',
+      tagline: 'Independent author-scoped actions.',
+      description: 'Immutable operation logs allow teammates to undo their own strokes without destroying a peer\'s contributions, with reversible canvas clear.',
+      status: 'Available',
       icon: (
         <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
         </svg>
       ),
     },
     {
-      title: 'Room-Based Collaboration',
-      tagline: 'Share a room and start creating together.',
-      description: 'Isolated URL-safe workspaces allowing instant collaboration with zero friction and straightforward link sharing.',
-      status: 'In Progress',
+      title: 'Offline Resilience & Replay',
+      tagline: 'Keep creating during network drops.',
+      description: 'Local-first architecture queues pending operations in durable storage and automatically reconciles state upon reconnection.',
+      status: 'Available',
       icon: (
         <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 00-9.78 2.096A4.001 4.001 0 003 15z" />
         </svg>
       ),
     },
@@ -64,7 +64,7 @@ export const FeatureSection: React.FC = () => {
             Core System Capabilities
           </h2>
           <p className="text-sm text-slate-600">
-            Key architectural features being developed section-by-section for modern engineering and design teams.
+            Engineered from first principles for high-performance real-time teamwork and resilient drawing.
           </p>
         </div>
 
@@ -78,11 +78,7 @@ export const FeatureSection: React.FC = () => {
                 <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shadow-2xs">
                   {feature.icon}
                 </div>
-                <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide ${
-                  feature.status === 'In Progress'
-                    ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                    : 'bg-slate-200/60 text-slate-600'
-                }`}>
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-200">
                   {feature.status}
                 </span>
               </div>

@@ -19,15 +19,18 @@ export const JoinRoomDialog: React.FC<JoinRoomDialogProps> = ({
   const [displayName, setDisplayName] = useState('');
   const [roomId, setRoomId] = useState(initialRoomId);
   const [errors, setErrors] = useState<{ displayName?: string; roomId?: string }>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     const trimmedName = displayName.trim();
     const normalizedId = normalizeRoomId(roomId);
     const newErrors: { displayName?: string; roomId?: string } = {};
 
     if (!trimmedName) {
-      newErrors.displayName = 'Please enter your display name.';
+      newErrors.displayName = 'Please enter your name to continue.';
     } else if (trimmedName.length < 2) {
       newErrors.displayName = 'Display name must be at least 2 characters.';
     } else if (trimmedName.length > 30) {
@@ -35,9 +38,9 @@ export const JoinRoomDialog: React.FC<JoinRoomDialogProps> = ({
     }
 
     if (!normalizedId) {
-      newErrors.roomId = 'Please enter a room ID.';
+      newErrors.roomId = 'Enter a room code to continue.';
     } else if (!isValidRoomId(normalizedId)) {
-      newErrors.roomId = 'Invalid room ID format (3–24 alphanumeric characters).';
+      newErrors.roomId = 'Invalid room code format (3–24 alphanumeric characters).';
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -46,8 +49,10 @@ export const JoinRoomDialog: React.FC<JoinRoomDialogProps> = ({
     }
 
     setErrors({});
+    setIsSubmitting(true);
     setUserSession(trimmedName);
     onClose();
+    setIsSubmitting(false);
     navigate(`/room/${normalizedId}`);
   };
 
@@ -55,6 +60,7 @@ export const JoinRoomDialog: React.FC<JoinRoomDialogProps> = ({
     setErrors({});
     setDisplayName('');
     setRoomId('');
+    setIsSubmitting(false);
     onClose();
   };
 
@@ -83,7 +89,8 @@ export const JoinRoomDialog: React.FC<JoinRoomDialogProps> = ({
             }}
             placeholder="e.g., Jordan Lee"
             maxLength={30}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+            disabled={isSubmitting}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all disabled:bg-slate-50 disabled:text-slate-500"
             autoComplete="name"
           />
           {errors.displayName && (
@@ -101,7 +108,7 @@ export const JoinRoomDialog: React.FC<JoinRoomDialogProps> = ({
             htmlFor="join-room-id"
             className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5"
           >
-            Room ID
+            Room Code
           </label>
           <input
             id="join-room-id"
@@ -113,7 +120,8 @@ export const JoinRoomDialog: React.FC<JoinRoomDialogProps> = ({
             }}
             placeholder="e.g., ABC7KQ"
             maxLength={24}
-            className="w-full font-mono uppercase tracking-wider rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
+            disabled={isSubmitting}
+            className="w-full font-mono uppercase tracking-wider rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all disabled:bg-slate-50 disabled:text-slate-500"
           />
           {errors.roomId && (
             <p role="alert" className="mt-1.5 text-xs text-rose-600 font-medium flex items-center gap-1">
@@ -129,15 +137,23 @@ export const JoinRoomDialog: React.FC<JoinRoomDialogProps> = ({
           <button
             type="button"
             onClick={handleClose}
-            className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-slate-300"
+            disabled={isSubmitting}
+            className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 rounded-xl shadow-xs shadow-indigo-600/20 transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+            disabled={isSubmitting}
+            className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 rounded-xl shadow-xs shadow-indigo-600/20 transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5"
           >
-            Join Room
+            {isSubmitting && (
+              <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            )}
+            <span>{isSubmitting ? 'Joining Room...' : 'Join Room'}</span>
           </button>
         </div>
       </form>

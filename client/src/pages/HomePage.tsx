@@ -29,14 +29,24 @@ export const HomePage: React.FC = () => {
 
       {/* Footer */}
       <footer className="border-t border-slate-200 bg-white py-8 px-4 text-center text-xs text-slate-500">
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-700">SyncDraw</span>
+            <span className="font-bold text-slate-800">SyncDraw</span>
             <span>•</span>
-            <span>Real-Time Collaborative Canvas Platform</span>
+            <span>Real-Time Collaborative Drawing Canvas</span>
           </div>
-          <div className="text-slate-400">
-            Frontend R&D Project • Section 2 Foundation
+
+          {/* Keyboard Shortcuts Quick Reference */}
+          <div className="flex flex-wrap items-center justify-center gap-2 text-[11px] text-slate-500">
+            <span>Shortcuts:</span>
+            <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-slate-700">P (Pen)</span>
+            <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-slate-700">H (Highlight)</span>
+            <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-slate-700">E (Eraser)</span>
+            <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-slate-700">Ctrl/Cmd+Z (Undo)</span>
+          </div>
+
+          <div className="text-slate-400 text-[11px]">
+            TypeScript • Canvas 2D • Socket.IO
           </div>
         </div>
       </footer>
