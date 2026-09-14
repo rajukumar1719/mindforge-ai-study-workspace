@@ -1,223 +1,296 @@
 # SyncDraw
 
-SyncDraw is a real-time collaborative drawing canvas that allows multiple users to draw together in the same room.
+SyncDraw is a high-performance, real-time collaborative drawing canvas and whiteboard platform. Built end-to-end in TypeScript, it enables multiple participants to sketch simultaneously in shared rooms with zero-latency vector rendering, live cursor tracking, author-scoped undo/redo, offline resilience, and defensive security rate limiting.
 
 ---
 
-## Overview
+## Features
 
-SyncDraw is designed as a high-performance, real-time collaborative whiteboard platform. Built as an end-to-end TypeScript application, SyncDraw pairs a fluid vector-capable drawing engine on the frontend with an event-driven synchronization backend to enable synchronous sketching, shape rendering, and shared brainstorming rooms.
-
----
-
-## Current Status
-
-SyncDraw is currently in active stage-by-stage development.
-
-### Implemented Features (Sections 1 ‚Äì 11)
-- **Full-Stack TypeScript Architecture**: Monorepo structure using npm workspaces (`client/` and `server/`), strict TypeScript, and ESLint.
-- **Backend Infrastructure**: Node.js + Express REST gateway with `/health` monitoring, CORS handling, and graceful shutdown.
-- **Product Landing Page**: Responsive hero, brand wordmark, capabilities preview, and static architectural illustration.
-- **Room Entry Flows**:
-  - Create Room: Display name validation, collision-resistant 6-character room ID generation (`ABC7KQ`), session identity caching, and routing.
-  - Join Room: Room code validation and uppercase normalization.
-  - Direct Link Handling: Automatic participant name prompt for direct `/room/:roomId` links.
-- **Accessible Modal System**: Focus trapping, `Escape` key dismissal, backdrop click handling, and ARIA attributes.
-- **Core Canvas Engine**: Native HTML5 Canvas 2D engine with unified Pointer Events, high-DPI retina scaling, `ResizeObserver` resilience, and quadratic B√©zier curve smoothing.
-- **Complete Local Drawing Toolset**:
-  - Pen, Highlighter (`0.35` alpha), and Stroke-Level Eraser with mathematical point-to-segment geometric hit detection.
-  - Color palette (6 presets) and brush sizing (5 presets).
-  - Logical Undo / Redo operation history stack.
-  - Clear canvas with accessible confirmation dialog.
-  - Blob-based PNG export (`syncdraw-{roomId}.png`).
-  - Keyboard shortcuts (`P`, `H`, `E`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z`, `Escape`).
-- **Real-Time Backend & WebSocket Foundation (Section 5)**:
-  - Dedicated bidirectional Socket.IO gateway with isolated room namespaces.
-  - In-memory `RoomManager` with automatic resource cleanup when rooms empty.
-  - Server-authoritative collaborator identities and accessible palette colors.
-  - Live presence count and collaborator avatar stack with tooltip badges.
-  - Dynamic connection status (`Connecting...`, `Connected`, `Reconnecting...`, `Disconnected`).
-  - Reconnection resilience with duplicate presence prevention.
-- **Real-Time Drawing Synchronization (Section 6)**:
-  - **Structured Stroke Synchronization**: Synchronizes lightweight vector drawing operations (`DRAW_START`, `DRAW_UPDATE`, `DRAW_END`, `ERASE_STROKES`) rather than heavy canvas screenshots or bitmap diffs.
-  - **Local-First Zero-Latency Rendering**: Local strokes render immediately at native screen refresh rates (60‚Äì120Hz); network transmission is batched and asynchronous.
-  - **Incremental Remote Rendering**: Remote points render incrementally on the 2D canvas context via B√©zier segments without full-canvas redraws or React state churn per point.
-  - **Multi-Tool Collaboration**: Synchronizes Pen, Highlighter (with alpha transparency), and Stroke-Level Eraser across concurrent users.
-  - **Simultaneous Multi-User Drawing**: Multiple users can draw at the exact same moment without stroke collision or overwriting.
-  - **Batched Network Dispatch & Point Reduction**: Point updates are buffered and flushed in $\sim 25\text{ms}$ windows ($\sim 40\text{ updates/sec}$) with Euclidean distance filtering to prevent WebSocket flooding.
-  - **Late-Join Initial State Hydration (`SYNC_STATE`)**: Late-joining participants immediately receive the room's canonical strokes on join.
-  - **Strict Room Isolation**: Drawing events are routed exclusively to peers in the same room.
-  - **Defensive Validation & Ghost Stroke Elimination**: Rigorous validation on stroke IDs, tools, colors, and coordinates; incomplete strokes from disconnected clients are cleanly finalized and purged.
-- **Live Collaborative Cursors & Presence Polish (Section 7)**:
-  - **Multiplayer Cursor Tracking**: Real-time cursor coordinates broadcast via `CURSOR_MOVE` and `CURSOR_UPDATE` with zero sender echo and room isolation.
-  - **Network Throttling**: Client-side 30ms rate-limiting and distance threshold filtering to eliminate unnecessary network traffic.
-  - **Decoupled GPU Overlay**: Cursors render in a dedicated DOM overlay (`<CursorOverlay>`) using CSS 3D transforms (`translate3d`), completely decoupled from canvas redraws and React render cycles.
-  - **Inactivity Staleness Fading**: Cursors automatically fade to zero opacity after 6 seconds of inactivity, while maintaining active room presence.
-  - **Ghost Cursor Cleanup**: Instant cursor element removal and timer teardown on user disconnect (`USER_LEFT`) and room exit.
-  - **Polished Presence Roster**: Avatar circles render the user's uppercase initials against their server-assigned color with an active green connection dot and local `(You)` badge.
-- **Collaborative Undo/Redo & Operation History (Section 8)**:
-  - **Author-Scoped Undo/Redo**: Collaborators can undo and redo their own operations without removing another collaborator's work.
-  - **Non-Destructive Operation Log**: Canvas mutations are recorded as immutable operations (`add-stroke`, `erase-strokes`, `clear-canvas`, `undo`, `redo`). Undoing an operation toggles its active state (`active: false`) rather than physically removing it from the log.
-  - **Collaborative Clear Canvas**: Clear is a synchronized, reversible operation. Undoing clear restores preceding strokes while preserving subsequent drawings.
-  - **Deterministic Canvas Reconstruction**: Replays active operations in chronological order on-demand, guaranteeing visual consistency across all connected clients with zero bitmap snapshots.
-  - **Server-Authoritative Validation**: Validates operation payloads, enforces authoritative socket identity, rejects cross-author mutations, and prevents duplicates via `operationId` sets.
-  - **Comprehensive State Hydration**: `SYNC_STATE` transmits both compiled strokes and canonical operation logs to newly joined and reconnected peers.
-- **Reconnection Reliability, Offline Queue & Safe Replay (Section 9)**:
-  - **Authoritative Connection State Machine**: Explicit 5-state client model (`connected`, `connecting`, `reconnecting`, `offline`, `disconnected`) reacting to transport drops, socket reconnect attempts, and browser `online`/`offline` lifecycle events.
-  - **Local-First Drawing Resilience**: Drawing, erasing, undo, redo, and clear remain 100% interactive while offline. Local mutations update the canvas immediately with zero latency.
-  - **Durable Client-Side Pending Operation Queue (`queue.ts`)**: Pending mutations are enqueued and persisted defensively to `localStorage` under `syncdraw:pending-operations:v1`.
-  - **Room & Session Isolation**: Persisted operations are strictly scoped by `roomId` and user display name, preventing any cross-room operation leaks.
-  - **Operation Acknowledgement Protocol (`OPERATION_ACK`)**: Direct sender-targeted acknowledgement confirming that an operation has passed validation and committed to canonical state.
-  - **Safe Reconnect Reconciliation**: On reconnect + `SYNC_STATE`, the client reconciles local pending operations against server canonical IDs. Already-canonical operations are purged from the queue; only missing unacknowledged operations are replayed.
-  - **Server Idempotency**: Duplicate operation IDs sent via retries or retransmissions are acknowledged safely as `ALREADY_CANONICAL` without duplicating room strokes or records.
-  - **Ephemeral Cursor Protection**: Live cursor coordinates (`CURSOR_MOVE`) are strictly ephemeral; they are never queued or saved to storage during offline periods.
-  - **Offline UI & Pending Counter**: Accessible status indicators (`‚óè Connected`, `‚Üª Reconnecting...`, `‚ö† Offline`) accompanied by a live pending changes pill (`3 changes pending` with `aria-live="polite"`).
-  - **In-Memory Room Reconnect Grace Period**: Empty rooms with drawing history are preserved for a 2-minute grace period before eviction, protecting users from state loss during brief network cuts.
-- **Performance Optimization, Scalability & Diagnostics (Section 10)**:
-  - **Zero-Allocation In-Place Local Drawing**: Eliminates $O(N^2)$ point array spreading during dragging via `appendPointInPlace`, preventing GC pauses and preserving 60‚Äì120 FPS.
-  - **Remote Drawing `requestAnimationFrame` Coalescing**: Batches incoming remote stroke points into display-synced frame flushes, preventing canvas context setup churn during multi-user drawing.
-  - **Compositor-Accelerated Live Cursors**: Cursor transforms use GPU-friendly `translate3d` with `requestAnimationFrame` batching, avoiding layout recalculations and canvas redraws.
-  - **$O(1)$ Indexed Operation History**: Client and server operation lookups utilize indexed hash maps (`operationMap`), enabling smooth undo/redo lookups across 5,000+ operations in $< 1.5\text{ms}$.
-  - **Debounced Offline Queue Storage**: Rapid acknowledgments and transmission states debounce `localStorage` persistence (50ms), reducing synchronous storage I/O under network burst conditions while preserving immediate durability on enqueue and browser unload.
-  - **Component Memoization & Hook Rules**: Pure functional subcomponents (`RoomHeader`, `Toolbar`, `ClearConfirmDialog`) memoized via `React.memo` with stabilized callbacks and strict top-level hook compliance.
-  - **Development Diagnostics HUD (`PerfOverlay`)**: Zero-production-overhead HUD tracking rolling FPS, active users, operations, queue depth, and round-trip heartbeat latency (`?debug=true`).
-  - **Comprehensive Stress Test Suite**: 6-part automated stress test verifying 1,000-point streams (32k+ pts/sec), 5,000 operations, 10 concurrent collaborators, and rapid reconnect cycling.
-- **Security, Rate Limiting & Abuse Hardening (Section 11)**:
-  - **Token-Bucket WebSocket Rate Limiting**: Per-socket token-bucket protection against DoS/flooding across `CURSOR_MOVE` (50 burst, 50/s refill), `DRAW_UPDATE` (60 burst, 60/s refill), `OPERATION_APPLY` (120 burst, 60/s refill), and `JOIN_ROOM` (5 burst, 1/s refill), with automatic cleanup on socket disconnect.
-  - **Room Resource & Memory Bounds**: Strict capacity limits preventing memory exhaustion (`MAX_USERS_PER_ROOM = 50`, `MAX_ACTIVE_STROKES_PER_USER = 10`, `MAX_ACTIVE_STROKES_PER_ROOM = 100`, `MAX_OPERATIONS_PER_ROOM = 10000`, `MAX_STROKES_PER_ROOM = 5000`) with protocol-level error reporting.
-  - **Input Sanitization & Unicode Preservation**: Strips ASCII/Unicode control characters (`[\x00-\x1F\x7F-\x9F\u200B-\u200D\uFEFF]`) and normalizes whitespace while preserving valid international Unicode; enforces strict `/^[A-Z0-9_-]{3,24}$/` regex on room IDs.
-  - **HTTP & Gateway Defense**: Disabled `X-Powered-By`; enforced defensive HTTP security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-XSS-Protection`, COOP, CORP, API CSP); hardened multi-origin CORS verification.
-  - **Client Offline Storage Quota Protection**: Enforces 500-record cap on browser `localStorage` offline queues (`MAX_PENDING_OPERATIONS = 500`) with defensive error recovery on `QuotaExceededError`.
-  - **Automated Security Test Suite**: 22 automated attack and abuse test scenarios (`npm run test:security -w server`) covering validation, authorization, rate limiting, and room isolation.
-- **UI/UX & Responsive Polish (Section 12)**:
-  - **Authentic Collaborative Canvas Hero & Mockup**: Interactive landing page with vector whiteboard preview, highlighter layer, simulated collaborator cursor, active floating toolbar, and live capability statuses.
-  - **Accessible ErrorBoundary**: Production React ErrorBoundary wrapping root routes, catching unexpected render anomalies with friendly fallback and recovery actions while keeping internal stack details safe.
-  - **Touch & Mobile Optimized Floating Toolbar**: Minimum 40px touch targets, platform-aware keyboard tooltips (`‚åò+Z` on Mac/iOS, `Ctrl+Z` on Windows/Linux), smooth horizontal momentum scrolling, and high-contrast active tool states.
-  - **Collaborative Clear Confirmation**: Unambiguous modal dialog ("Clear Canvas for Everyone?") explicitly informing users of multi-user canvas impact before clearing, while noting author-scoped undo recovery.
-  - **Polished Collaborator Presence & Status**: Dynamic SVG status icons for connecting, reconnecting, and offline states; collaborator initials avatars with stable palette colors and `+N` overflow pill.
-  - **Keyboard Shortcuts Cheat Sheet**: Global shortcuts matrix and architectural transparency notice in the landing page footer.
+- **Real-Time Vector Sync**: Synchronizes lightweight vector operations (`DRAW_START`, `DRAW_UPDATE`, `DRAW_END`, `ERASE_STROKES`) rather than heavy canvas screenshots or bitmap diffs.
+- **Local-First Zero-Latency Rendering**: Local strokes render instantaneously at native display refresh rates (60ñ120 FPS); network broadcasts are batched in ~25ms intervals.
+- **Drawing Tools**: Pen, Highlighter (`0.35` alpha), and stroke-level Eraser with geometric point-to-segment hit detection.
+- **Live Collaborative Cursors & Presence**: Decoupled GPU-accelerated cursor overlay (`translate3d`) with 30ms rate limiting, 6-second inactivity fading, and real-time collaborator presence roster with initial avatars.
+- **Author-Scoped Collaborative History**: Non-destructive operation log allowing collaborators to undo and redo their own mutations without altering peers' drawings. Includes collaborative, reversible canvas clearing.
+- **Offline Operation Queue & Safe Replay**: Operates 100% offline with durable `localStorage` queuing. On reconnect, missing mutations are safely reconciled against server state with zero duplicate strokes.
+- **Touch & Mobile Optimized**: Minimum 40px touch targets, horizontal momentum scrolling, platform-aware keyboard shortcuts (`?` vs `Ctrl`), and responsive layouts from mobile (375px) to 4K displays.
+- **Defensive Security & Rate Limiting**: Per-socket token-bucket rate limiters (`CURSOR_MOVE`, `DRAW_UPDATE`, `OPERATION_APPLY`, `JOIN_ROOM`), hard room memory bounds (50 users, 10,000 operations), input sanitization, disabled `X-Powered-By`, and strict HTTP security headers.
+- **Fault-Tolerant Architecture**: Top-level React `ErrorBoundary` for graceful UI error recovery; structured protocol error notifications (`RATE_LIMITED`, `ROOM_FULL`, `AUTHOR_MISMATCH`).
 
 ---
 
-## Planned Features
+## Architecture
 
-The following features are planned for upcoming development sections:
+SyncDraw pairs a React single-page frontend with an event-driven Node.js backend:
 
-- **Geometric Shapes & Annotations** *(Planned)*: Rectangle, ellipse, arrow, and text annotation tools.
-- **Database & Cloud Room Persistence** *(Planned)*: Persistent database snapshot storage and historical action replay.
-- **Canvas Zoom, Pan & Infinite Workspace** *(Planned)*: Infinite viewport navigation and scaling.
-
----
-
-## Tech Stack
-
-### Frontend (`client`)
-- **Framework**: React 19
-- **Routing**: React Router v7 (`react-router-dom`)
-- **Real-Time Client**: Socket.IO Client (`socket.io-client`)
-- **Canvas Engine**: Native HTML5 Canvas 2D Context + Quadratic B√©zier Smoothing + Geometric Hit Testing
-- **Language**: TypeScript (Strict Mode)
-- **Build Tool**: Vite
-- **Styling**: Tailwind CSS v4
-- **Linting**: ESLint flat config with `typescript-eslint` & `eslint-plugin-react-hooks`
-
-### Backend (`server`)
-- **Runtime**: Node.js
-- **Real-Time Gateway**: Socket.IO Server (`socket.io`)
-- **Web Framework**: Express
-- **Language**: TypeScript (Strict NodeNext)
-- **Tooling**: `tsx` (TypeScript Execute / Watch)
-
----
-
-## Keyboard Shortcuts
-
-| Key | Action | Scope |
-|---|---|---|
-| `P` | Pen Tool | Global |
-| `H` | Highlighter Tool | Global |
-| `E` | Eraser Tool | Global |
-| `Ctrl+Z` / `Cmd+Z` | Undo | Global |
-| `Ctrl+Shift+Z` / `Cmd+Shift+Z` | Redo | Global |
-| `Escape` | Close Dialog | Global |
-
-*Note: Drawing shortcuts are automatically disabled while focused on text input fields.*
+```text
+Browser Client A (Desktop)           Browser Client B (Mobile)
+       ¶                                     ¶
+       ¶ HTTPS                               ¶ HTTPS
+       ?                                     ?
+Static Frontend (Vite SPA)           Static Frontend (Vite SPA)
+       ¶                                     ¶
+       ¶ WSS / Socket.IO (Port 443)          ¶ WSS / Socket.IO (Port 443)
+       ?                                     ?
++------------------------------------------------------------------------+
+¶                   SyncDraw Real-Time Server Gateway                    ¶
+¶             (Express HTTP + Socket.IO on Node.js / TS)                 ¶
++------------------------------------------------------------------------+
+                                    ¶
+                         +---------------------+
+                         ¶ In-Memory Registry  ¶
+                         ¶    (RoomManager)    ¶
+                         +---------------------+
+                                    ¶
+             +---------------------------------------------+
+             ?                                             ?
++-------------------------+                   +-------------------------+
+¶       Room ABC123       ¶                   ¶       Room XYZ789       ¶
+¶  +-- User A (#4f46e5)   ¶                   ¶  +-- User C (#0891b2)   ¶
+¶  +-- User B (#059669)   ¶                   ¶                         ¶
+¶  (Isolated Namespace)   ¶                   ¶  (Isolated Namespace)   ¶
++-------------------------+                   +-------------------------+
+```
 
 ---
 
-## Development Setup
+## Local Development
 
 ### Prerequisites
-- Node.js 20+ (tested on Node v24)
-- npm 10+ (or 11+)
+- Node.js `>=20.0.0` (tested on Node v24.14.1)
+- npm `>=10.0.0` (tested on npm 11.11.0)
 
-### Installation
+### Quick Start
 
 ```bash
-# Install dependencies across client and server workspaces
+# 1. Clone repository and install dependencies
 npm install
-```
 
-### Environment Configuration
-
-```bash
-# Client configuration
+# 2. Configure environment files from templates
+cp .env.example .env
 cp client/.env.example client/.env
-
-# Server configuration
 cp server/.env.example server/.env
-```
 
-### Running in Development
-
-```bash
+# 3. Start development environment (runs client on :5173 and server on :5000)
 npm run dev
 ```
 
-Alternatively, run each workspace individually:
+Alternatively, run each workspace independently:
 
 ```bash
-# Run server only (starts on http://localhost:5000)
+# Run backend server only (starts on http://localhost:5000)
 npm run dev:server
 
-# Run client only (starts on http://localhost:5173)
+# Run frontend client only (starts on http://localhost:5173)
 npm run dev:client
 ```
 
-### Build & Type Verification
+---
+
+## Environment Variables
+
+SyncDraw cleanly separates client build-time variables from server runtime variables:
+
+### Frontend Variables (`client/.env` or build environment)
+| Variable | Description | Default / Example |
+|---|---|---|
+| `VITE_API_URL` | Public URL of deployed backend gateway | `http://localhost:5000` (production: `https://syncdraw-backend.onrender.com`) |
+| `VITE_SERVER_URL` | Alias for `VITE_API_URL` (backward compatibility) | `http://localhost:5000` |
+| `VITE_PERF_DEBUG` | Mounts diagnostic FPS/latency HUD by default | `false` (toggleable in browser via `?debug=true`) |
+
+### Backend Variables (`server/.env` or platform config)
+| Variable | Description | Default / Example |
+|---|---|---|
+| `PORT` | Server listen port (injected automatically by cloud PaaS) | `5000` |
+| `NODE_ENV` | Environment mode (`development` \| `production`) | `development` |
+| `CLIENT_ORIGIN` | Allowed frontend origin(s) for HTTP and Socket.IO CORS | `http://localhost:5173` (production: `https://syncdraw.onrender.com`) |
+| `CLIENT_URL` | Alias for `CLIENT_ORIGIN` (supports comma-separated origins) | `http://localhost:5173` |
+
+---
+
+## Production Build
+
+To compile both frontend and backend for production:
 
 ```bash
-# Run TypeScript strict typecheck across all workspaces
-npm run typecheck
-
-# Run ESLint on client
-npm run lint
-
-# Build both client and server for production
 npm run build
 ```
 
-### Automated Real-Time Test Suites
- 
+Individual workspace build commands:
 ```bash
-# Run automated drawing synchronization test suite (11 test cases)
+# Compile backend TypeScript to server/dist/
+npm run build:server
+
+# Bundle client to client/dist/ with Vite
+npm run build:client
+```
+
+To run the compiled backend locally in production mode:
+```bash
+npm run start -w server
+# Or directly:
+node server/dist/server.js
+```
+
+---
+
+## Deployment
+
+SyncDraw requires a **persistent Node.js process** for the backend to support long-lived Socket.IO WebSocket connections. Serverless platforms (e.g. AWS Lambda without WebSockets) are incompatible.
+
+### Recommended Provider: Render (Infrastructure Blueprint)
+
+The repository includes a production-ready `render.yaml` blueprint deploying:
+1. **Backend**: Render Web Service (persistent Node.js + Express + Socket.IO on Starter/Standard tier).
+2. **Frontend**: Render Static Site (Vite Single Page Application on Free/Static tier).
+
+#### Step-by-Step Deployment Steps:
+
+1. **Push repository to GitHub**:
+   Ensure all changes are committed and pushed to your GitHub repository.
+
+2. **Connect to Render**:
+   - Log in to [Render Dashboard](https://dashboard.render.com).
+   - Click **New +** $\to$ **Blueprint**.
+   - Connect your SyncDraw repository.
+   - Render reads `render.yaml` and initializes both services.
+
+3. **Configure Environment Variables**:
+   - On the backend service (`syncdraw-backend`), verify:
+     - `NODE_ENV`: `production`
+     - `CLIENT_ORIGIN`: `https://<your-frontend-subdomain>.onrender.com`
+   - On the frontend service (`syncdraw-frontend`), set:
+     - `VITE_API_URL`: `https://<your-backend-subdomain>.onrender.com`
+
+4. **Deploy**:
+   - Trigger deployment.
+   - The backend builds via `npm install && npm run build:server` and starts via `npm run start -w server`.
+   - The frontend builds via `npm install && npm run build:client` and serves `client/dist`.
+   - The `client/public/_redirects` file guarantees SPA fallback (`/* /index.html 200`) for direct `/room/:roomId` links.
+
+### Manual VPS / Docker / Alternative Deployment:
+For traditional Linux VPS (Ubuntu, Debian) or PaaS (Railway, Fly.io):
+- **Backend**: Execute `npm install && npm run build:server`, run `npm run start -w server` via `pm2` or `systemd`, reverse-proxy through Nginx with WebSocket upgrade headers (`Upgrade $http_upgrade`, `Connection "upgrade"`), and configure SSL via Let's Encrypt Certbot.
+- **Frontend**: Serve `client/dist` via Nginx, Caddy, Vercel, or Cloudflare Pages with SPA rewrite `try_files $uri $uri/ /index.html =404;`.
+
+---
+
+## Health Check
+
+The backend exposes an unauthenticated, lightweight health endpoint:
+
+```http
+GET /health
+```
+
+**Response (HTTP 200)**:
+```json
+{
+  "status": "ok",
+  "service": "syncdraw-backend",
+  "uptime": 1464,
+  "timestamp": "2026-09-14T05:22:59.108Z"
+}
+```
+Used by cloud uptime monitors and load balancers to verify service health without triggering database or disk overhead.
+
+---
+
+## WebSocket Configuration
+
+SyncDraw connects over Socket.IO using WebSocket transport with automatic polling fallback:
+- **Development**: Connects to `http://localhost:5000` via `ws://`.
+- **Production**: When served over HTTPS, Socket.IO connects to `VITE_API_URL` and establishes a secure `wss://` connection.
+- **Disconnection & Heartbeats**: Socket.IO ping/pong packets monitor connectivity. If dropped, exponential backoff reconnects automatically while preserving the local drawing queue.
+
+---
+
+## Testing & Quality Assurance
+
+SyncDraw features 6 comprehensive automated test suites covering all system dimensions:
+
+```bash
+# 1. Real-time drawing synchronization (11 test cases)
 npm run test:drawing -w server
 
-# Run automated live cursor synchronization test suite (7 test cases)
+# 2. Live collaborative cursors & room isolation (7 test cases)
 npm run test:cursor -w server
 
-# Run automated collaborative history & undo/redo test suite (16 test cases)
+# 3. Collaborative history & author-scoped undo/redo (16 test cases)
 npm run test:history -w server
 
-# Run automated reconnect, offline queue & safe replay test suite (16 test cases)
+# 4. Reconnect resilience & offline operation replay (16 test cases)
 npm run test:reconnect -w server
 
-# Run automated performance, scalability & stress test suite (6 stress test cases)
+# 5. Performance & scalability stress suite (6 stress test cases)
 npm run test:performance -w server
 
-# Run automated security, abuse & authorization test suite (22 test cases)
+# 6. Security, rate limiting & abuse hardening (22 test cases)
 npm run test:security -w server
 ```
+
+**Overall Test Suite Status: 78 / 78 tests passing (100% green).**
+
+Code quality commands:
+```bash
+# Strict TypeScript validation across all workspaces
+npm run typecheck
+
+# ESLint flat config validation on client workspace
+npm run lint -w client
+```
+
+---
+
+## Accessibility
+
+- **Keyboard Navigation**: Full keyboard shortcuts (`P`, `H`, `E`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z`, `Escape`). Shortcuts are suppressed automatically while typing in text inputs.
+- **Focus States**: Visible focus rings (`focus-visible:ring-2 focus-visible:ring-indigo-500`) across all buttons, palette swatches, and inputs.
+- **Dialog Trapping**: Focus trapping, `Escape` key dismissal, backdrop click dismissal, and `role="dialog"` modal semantics.
+- **Live Status Announcements**: `aria-live="polite"` announces pending offline changes and dynamic connection states to assistive technologies.
+- **Touch Targets**: Minimum 40px touch targets (`min-w-[40px] min-h-[40px]`) prevent mis-taps on mobile devices.
+- **Motion Adaptation**: `prefers-reduced-motion` suppresses spinning and pulsing animations.
+- *Honest Note*: Universal WCAG compliance cannot be claimed for the freehand 2D canvas drawing surface itself, as arbitrary sketches lack semantic text equivalents.
+
+---
+
+## Security
+
+Comprehensive threat modeling, validation rules, rate-limiting parameters, and audit findings are documented in [SECURITY.md](SECURITY.md).
+- **Rate Limiting**: Sliding-window token buckets per connection (`CURSOR_MOVE`, `DRAW_UPDATE`, `OPERATION_APPLY`, `JOIN_ROOM`).
+- **Authorization**: Author-scoped undo/redo enforcement and server identity rewriting to prevent spoofing.
+- **Headers & CORS**: Strict production origin verification, disabled `X-Powered-By`, frame prevention, and MIME-sniffing protection.
+
+---
+
+## Known Limitations
+
+1. **Single-Node In-Memory Architecture**: Room states and operation histories reside in server heap memory. Horizontal clustering across multiple servers requires a distributed Pub/Sub adapter (such as Redis) which is not yet implemented.
+2. **2-Minute Reconnect Grace Period**: When all users exit a room, drawing history is preserved for 2 minutes before memory eviction. A complete server restart clears active room memory.
+3. **Session-Based Pseudonymous Identity**: SyncDraw relies on session display names and transient socket IDs rather than persistent user accounts or database authentication.
+4. **Offline Queue Bounds**: Browser `localStorage` offline queues are capped at 500 operations to prevent client storage quota exhaustion.
+5. **Transitive `qs` Advisory**: Two moderate advisories exist in transitive dependency `qs` via `express@4.21.2` (`GHSA-x5fp-wj9c-mxmx`, `GHSA-4mjr-xmp4-gh2g`). SyncDraw does not process query strings with `qs`; dependencies are preserved to maintain runtime stability.
+
+---
+
+## Deployment Troubleshooting
+
+### 1. Frontend cannot connect to backend
+- Verify `VITE_API_URL` points to the exact backend URL (e.g. `https://syncdraw-backend.onrender.com`). Remember that `VITE_*` variables must be set **before** building the client.
+- Check backend `CLIENT_ORIGIN`: ensure the exact frontend domain (including `https://` without a trailing slash) is included in the backend's allowed origins.
+- Verify the backend is online and running (`GET /health`).
+
+### 2. WebSocket disconnects or fails to upgrade
+- Confirm your hosting provider supports persistent WebSockets. Free tiers that sleep after inactivity will disconnect active sockets; use persistent plans for production.
+- Ensure reverse proxies (Nginx / Cloudflare) have WebSocket upgrades enabled (`proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`).
+
+### 3. Direct URL refresh on `/room/:roomId` returns 404
+- The hosting provider is not forwarding client-side routes to `index.html`.
+- For Render, Netlify, and Cloudflare Pages, verify `client/public/_redirects` was copied to the build root (`client/dist/_redirects`).
+- For Nginx, configure `try_files $uri $uri/ /index.html;`.
+
+### 4. Health check fails on deployment
+- Ensure the backend binds to `process.env.PORT` (`0.0.0.0`), not hardcoded `localhost:5000`.
+- Verify the health check path in the hosting platform is configured to `/health` (HTTP 200).
 
 ---
 

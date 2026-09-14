@@ -199,3 +199,21 @@ SyncDraw standardizes on predictable, structured error codes transmitted via `ER
    - `express@4.22.2` depends on `qs` (2.2.5 – 6.15.3) which has 2 moderate advisories (`GHSA-x5fp-wj9c-mxmx`, `GHSA-4mjr-xmp4-gh2g`).
    - *Assessment*: SyncDraw does not process query-string parameters with `qs`. Upgrading Express blindly to a breaking major prerelease was avoided to maintain protocol stability.
 
+---
+
+## 12. Production Deployment Security & Secret Handling (Section 13)
+
+1. **Environment Secret Separation**:
+   - Build-time variables (`VITE_*`) are embedded into static bundles and must never contain private keys, database passwords, or operational secrets.
+   - Only public connection configuration (`VITE_API_URL`) is exposed to the frontend.
+2. **Production CORS Verification**:
+   - The backend strictly enforces `CLIENT_ORIGIN` / `CLIENT_URL`. Wildcard (`*`) is prohibited in production.
+   - Unauthenticated non-browser requests without origin headers (such as `/health` probes from cloud load balancers) are safely permitted without triggering CORS errors.
+3. **HTTPS / WSS Expectation**:
+   - In production, all transport must occur over TLS 1.3/HTTPS.
+   - Socket.IO client automatically connects via secure WebSocket (`wss://`) when the hosting environment is served over HTTPS.
+4. **Defensive Headers & Framing**:
+   - Reverse proxies and Express enforce `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff`.
+   - Technology fingerprinting (`X-Powered-By`) is disabled at the application gateway.
+
+

@@ -486,56 +486,100 @@ Section 11 hardens SyncDraw against realistic web application and WebSocket abus
 
 ---
 
+## 10. Production Deployment & Runtime Architecture (Section 13)
+
+### 10.1 Network Topology & Multi-Tier Runtime
+
+```text
+Browser Client A (Desktop)             Browser Client B (Mobile)
+       │                                       │
+       │ HTTPS (TLS 1.3)                       │ HTTPS (TLS 1.3)
+       ▼                                       ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   Production Static Host / CDN                         │
+│       (Render Static Site / Vercel / Netlify / Cloudflare Pages)       │
+│                 Serves precompiled client/dist assets                  │
+│               SPA Route Fallback: /* -> /index.html (200)              │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    │ WSS / Socket.IO (Port 443)
+                                    │ Upgrade: websocket
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   SyncDraw Real-Time Server Gateway                    │
+│          (Render Web Service / Persistent Node.js 20+ Runtime)         │
+│          Entrypoint: node server/dist/server.js (via npm start)        │
+│          Dynamic Port Binding: process.env.PORT || 5000                │
+│          Defensive Headers: nosniff, DENY framing, origin CSP          │
+│          CORS Enforcement: CLIENT_ORIGIN / CLIENT_URL verification     │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                         ┌──────────┴──────────┐
+                         │ In-Memory Registry  │
+                         │    (RoomManager)    │
+                         └──────────┬──────────┘
+                                    │
+             ┌──────────────────────┴──────────────────────┐
+             ▼                                             ▼
+┌─────────────────────────┐                   ┌─────────────────────────┐
+│      Room ABC123        │                   │       Room XYZ789       │
+│  ├── User A (#4f46e5)   │                   │  └── User C (#0891b2)   │
+│  └── User B (#059669)   │                   │                         │
+│  (Isolated Namespace)   │                   │  (Isolated Namespace)   │
+└─────────────────────────┘                   └─────────────────────────┘
+```
+
+### 10.2 Hosting Mechanics
+1. **Persistent WebSocket Service**:
+   - The backend runs as a continuous, stateful Node.js process (`node dist/server.js`).
+   - Serverless functions are incompatible because they cannot maintain long-lived Socket.IO WebSocket connections.
+2. **Single-Node In-Memory Boundary**:
+   - `RoomManager`, active collaborator rosters, and token-bucket rate limiters reside in process heap memory.
+   - Horizontal clustering across multiple servers would require an external pub/sub coordinator (such as Redis with `@socket.io/redis-adapter`), which is outside the current scope.
+3. **SPA Client-Side Routing**:
+   - Direct navigation to `/room/:roomId` is rewritten to `/index.html` via `client/public/_redirects` (`/* /index.html 200`).
+4. **Health Check Probes**:
+   - Lightweight unauthenticated health endpoint (`GET /health`) allows PaaS load balancers to confirm uptime without database overhead.
+
+---
+
 ## 11. Directory Structure
 
 ```text
 mindforge/ (SyncDraw Workspace Root)
 ├── client/
+│   ├── public/
+│   │   └── _redirects          # SPA client-side route fallback rule
 │   ├── src/
-│   │   ├── canvas/                     # Local Canvas Engine
-│   │   │   ├── export.ts               # Blob-based PNG export utility
-│   │   │   ├── geometry.ts             # Segment distance & stroke intersection
-│   │   │   ├── history.ts              # Operation application, reversion & O(1) index
-│   │   │   ├── pointer.ts              # Unified pointer controller
-│   │   │   ├── renderer.ts             # Bézier curve smoothing & tool alpha
-│   │   │   ├── scaling.ts              # High-DPI scaling & coordinates
-│   │   │   ├── stroke.ts               # Stroke factory & in-place mutation
-│   │   │   └── types.ts                # Point, Stroke, CanvasOperation types
-│   │   ├── collaboration/              # Real-Time Client Abstraction
-│   │   │   ├── index.ts                # Module exports
-│   │   │   ├── queue.ts                # Durable pending operation queue & storage
-│   │   │   ├── socketClient.ts         # Socket.IO connection & state machine client
-│   │   │   └── types.ts                # Client collaboration event contracts
-│   │   ├── components/
-│   │   │   ├── canvas/
-│   │   │   │   ├── Canvas.tsx          # Canvas host component & rAF coalescing
-│   │   │   │   ├── ClearConfirmDialog.tsx # Clear confirmation modal
-│   │   │   │   └── Toolbar.tsx         # Floating drawing toolbar
-│   │   │   ├── collaboration/
-│   │   │   │   ├── CursorOverlay.tsx   # GPU-composited remote cursor overlay
-│   │   │   │   └── PresenceBadge.tsx   # Live presence roster & color avatars
-│   │   │   ├── debug/
-│   │   │   │   └── PerfOverlay.tsx     # Dev-mode FPS & latency diagnostics HUD
-│   │   │   ├── ui/
-│   │   │   │   ├── ErrorBoundary.tsx   # Top-level React error boundary
-│   │   │   │   └── Modal.tsx           # Accessible modal dialog
-│   │   │   ├── CreateRoomDialog.tsx    # Room creation modal
-│   │   │   ├── FeatureSection.tsx      # Capabilities grid
-│   │   │   ├── Header.tsx              # Brand header
-│   │   │   ├── Hero.tsx                # Hero section
-│   │   │   ├── JoinRoomDialog.tsx      # Room join modal
-│   │   │   ├── ProductPreview.tsx      # Static architecture illustration
-│   │   │   ├── RoomHeader.tsx          # Room header with presence & status
-│   │   │   └── StatusBadge.tsx         # Connection status badge
-│   │   ├── pages/
-│   │   │   ├── HomePage.tsx            # Landing page
-│   │   │   ├── NotFoundPage.tsx        # 404 page
-│   │   │   └── RoomPage.tsx            # Room workspace host & offline reconciliation
-│   │   ├── types/
-│   │   ├── utils/
-│   │   ├── App.tsx
-│   │   ├── index.css
-│   │   └── main.tsx
+│   │   ├── canvas/
+│   │   │   ├── Canvas.tsx          # Canvas host component & rAF coalescing
+│   │   │   ├── ClearConfirmDialog.tsx # Clear confirmation modal
+│   │   │   ├── Toolbar.tsx         # Floating drawing toolbar
+│   │   │   └── index.ts
+│   │   ├── collaboration/
+│   │   │   ├── CursorOverlay.tsx   # GPU-composited remote cursor overlay
+│   │   │   ├── PresenceBadge.tsx   # Live presence roster & color avatars
+│   │   │   ├── socketClient.ts     # Socket.IO client gateway & rAF batching
+│   │   │   ├── queue.ts            # Durable offline queue & localStorage sync
+│   │   │   └── types.ts
+│   │   ├── debug/
+│   │   │   └── PerfOverlay.tsx     # Dev-mode FPS & latency diagnostics HUD
+│   │   ├── ui/
+│   │   │   ├── ErrorBoundary.tsx   # Top-level React error boundary
+│   │   │   └── Modal.tsx           # Accessible modal dialog
+│   │   ├── CreateRoomDialog.tsx    # Room creation modal
+│   │   ├── FeatureSection.tsx      # Capabilities grid
+│   │   ├── Header.tsx              # Brand header
+│   │   ├── Hero.tsx                # Hero section
+│   │   ├── JoinRoomDialog.tsx      # Room join modal
+│   │   ├── ProductPreview.tsx      # Authentic whiteboard canvas mockup
+│   │   ├── RoomHeader.tsx          # Room header with presence & status
+│   │   └── StatusBadge.tsx         # Connection status badge
+│   ├── pages/
+│   │   ├── HomePage.tsx            # Landing page
+│   │   ├── NotFoundPage.tsx        # 404 page
+│   │   └── RoomPage.tsx            # Room workspace host & offline reconciliation
+│   ├── .env.example
 │   ├── package.json
 │   └── vite.config.ts
 │
