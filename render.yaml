@@ -1,0 +1,48 @@
+# ==============================================================================
+# SyncDraw — Render Blueprint Deployment Specification
+# ==============================================================================
+# Deploys SyncDraw as:
+# 1. A persistent Node.js Web Service (Backend + Socket.IO)
+# 2. A Static Site (Vite frontend with SPA client-side route fallback)
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # Backend Web Service (Persistent Node.js + Express + Socket.IO)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: syncdraw-backend
+    env: node
+    plan: starter # Persistent service required for long-lived WebSockets
+    region: oregon
+    buildCommand: npm install && npm run build:server
+    startCommand: npm run start -w server
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_ORIGIN
+        # Update with your static site domain or comma-separated list
+        value: https://syncdraw-frontend.onrender.com
+
+  # ----------------------------------------------------------------------------
+  # Frontend Static Site (Vite Single Page Application)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: syncdraw-frontend
+    env: static
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build:client
+    staticPublishPath: client/dist
+    autoDeploy: true
+    routes:
+      # SPA rewrite rule: forward all client-side routes to index.html
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        # Set to the deployed backend URL (e.g. https://syncdraw-backend.onrender.com)
+        value: https://syncdraw-backend.onrender.com

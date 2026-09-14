@@ -60,7 +60,11 @@ export interface CollaborationClient {
 export function createCollaborationClient(
   options: CollaborationClientOptions
 ): CollaborationClient {
-  const url = options.serverUrl || import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
+  const url =
+    options.serverUrl ||
+    import.meta.env.VITE_API_URL ||
+    import.meta.env.VITE_SERVER_URL ||
+    (typeof window !== 'undefined' && import.meta.env.PROD ? window.location.origin : 'http://localhost:5000');
 
   options.onStatusChange('connecting');
 
