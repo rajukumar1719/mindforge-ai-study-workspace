@@ -169,7 +169,7 @@ export const RoomHeader: React.FC<RoomHeaderProps> = React.memo(({
             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${currentStatus.bg}`}
             title={currentStatus.title}
           >
-            <span className={`w-1.5 h-1.5 rounded-full ${currentStatus.dot}`} />
+            {currentStatus.icon}
             <span>{currentStatus.label}</span>
           </div>
 

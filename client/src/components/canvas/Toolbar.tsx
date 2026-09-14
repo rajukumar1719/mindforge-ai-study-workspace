@@ -53,26 +53,31 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
     });
   };
 
+  // Platform detection for tooltips (Cmd on Mac/iOS, Ctrl elsewhere)
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+  const modKey = isMac ? '⌘' : 'Ctrl';
+
   return (
     <aside
       role="toolbar"
       aria-label="Canvas drawing tools and controls"
-      className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 sm:gap-2.5 p-1.5 sm:p-2 rounded-2xl bg-white/95 backdrop-blur-md border border-slate-200/90 shadow-xl shadow-slate-300/40 max-w-[96vw] overflow-x-auto select-none"
+      className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 sm:gap-2.5 p-1.5 sm:p-2 rounded-2xl bg-white/95 backdrop-blur-md border border-slate-200/90 shadow-xl shadow-slate-300/40 max-w-[96vw] overflow-x-auto select-none touch-pan-x"
+      style={{ WebkitOverflowScrolling: 'touch' }}
     >
       {/* 1. Drawing Tools (Pen, Highlighter, Eraser) */}
-      <div className="flex items-center gap-1" role="radiogroup" aria-label="Tool selection">
+      <div className="flex items-center gap-1 shrink-0" role="radiogroup" aria-label="Tool selection">
         {/* Pen Button */}
         <button
           type="button"
           role="radio"
           aria-checked={settings.tool === 'pen'}
-          aria-label="Pen Tool (P)"
+          aria-label="Pen Tool (Shortcut: P)"
           title="Pen (P)"
           onClick={() => handleToolSelect('pen')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+          className={`min-w-[40px] min-h-[40px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${
             settings.tool === 'pen'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              ? 'bg-indigo-600 text-white shadow-xs ring-1 ring-indigo-700'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/90'
           }`}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -86,13 +91,13 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
           type="button"
           role="radio"
           aria-checked={settings.tool === 'highlighter'}
-          aria-label="Highlighter Tool (H)"
+          aria-label="Highlighter Tool (Shortcut: H)"
           title="Highlighter (H)"
           onClick={() => handleToolSelect('highlighter')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+          className={`min-w-[40px] min-h-[40px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${
             settings.tool === 'highlighter'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              ? 'bg-indigo-600 text-white shadow-xs ring-1 ring-indigo-700'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/90'
           }`}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -106,13 +111,13 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
           type="button"
           role="radio"
           aria-checked={settings.tool === 'eraser'}
-          aria-label="Eraser Tool (E)"
+          aria-label="Eraser Tool (Shortcut: E)"
           title="Eraser (E)"
           onClick={() => handleToolSelect('eraser')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+          className={`min-w-[40px] min-h-[40px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${
             settings.tool === 'eraser'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              ? 'bg-indigo-600 text-white shadow-xs ring-1 ring-indigo-700'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/90'
           }`}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -122,11 +127,11 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
         </button>
       </div>
 
-      <div className="h-5 w-px bg-slate-200 shrink-0" />
+      <div className="h-6 w-px bg-slate-200 shrink-0 mx-0.5" />
 
       {/* 2. Color Palette (Disabled / Dimmed when Eraser is active) */}
       <div
-        className={`flex items-center gap-1 sm:gap-1.5 transition-opacity ${
+        className={`flex items-center gap-1 sm:gap-1.5 shrink-0 transition-opacity ${
           isEraser ? 'opacity-30 pointer-events-none' : 'opacity-100'
         }`}
         role="radiogroup"
@@ -144,12 +149,12 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
               title={isEraser ? 'Color disabled for Eraser' : c.label}
               disabled={isEraser}
               onClick={() => onSettingsChange({ ...settings, color: c.value })}
-              className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full transition-transform flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-indigo-500 ${
-                isSelected ? 'scale-115 ring-2 ring-slate-900 ring-offset-1 shadow-xs' : 'hover:scale-105'
+              className={`min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] rounded-full transition-transform flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${
+                isSelected ? 'scale-110 ring-2 ring-slate-900 ring-offset-2 shadow-xs' : 'hover:scale-105'
               }`}
             >
               <span
-                className="w-full h-full rounded-full border border-black/10"
+                className="w-5 h-5 sm:w-6 sm:h-6 rounded-full border border-black/15 shadow-2xs"
                 style={{ backgroundColor: c.value }}
               />
             </button>
@@ -157,10 +162,10 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
         })}
       </div>
 
-      <div className="h-5 w-px bg-slate-200 shrink-0" />
+      <div className="h-6 w-px bg-slate-200 shrink-0 mx-0.5" />
 
       {/* 3. Brush Size Presets */}
-      <div className="flex items-center gap-0.5 sm:gap-1" role="radiogroup" aria-label="Brush size">
+      <div className="flex items-center gap-0.5 sm:gap-1 shrink-0" role="radiogroup" aria-label="Brush size">
         {BRUSH_SIZES.map((b) => {
           const isSelected = settings.width === b.value;
           return (
@@ -172,8 +177,8 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
               aria-label={`Brush size: ${b.label}`}
               title={b.label}
               onClick={() => onSettingsChange({ ...settings, width: b.value })}
-              className={`w-6 h-6 sm:w-7 sm:h-7 rounded-xl flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-                isSelected ? 'bg-slate-100 text-slate-900 border border-slate-300' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-50'
+              className={`min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] rounded-xl flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${
+                isSelected ? 'bg-slate-100 text-slate-900 border border-slate-300 shadow-2xs' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-50'
               }`}
             >
               <span
@@ -185,18 +190,18 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
         })}
       </div>
 
-      <div className="h-5 w-px bg-slate-200 shrink-0" />
+      <div className="h-6 w-px bg-slate-200 shrink-0 mx-0.5" />
 
       {/* 4. Canvas Actions: Undo, Redo, Clear, Export */}
-      <div className="flex items-center gap-0.5 sm:gap-1">
+      <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
         {/* Undo */}
         <button
           type="button"
           onClick={onUndo}
           disabled={!canUndo}
-          aria-label="Undo drawing operation (Ctrl+Z)"
-          title="Undo (Ctrl+Z)"
-          className={`p-1.5 sm:p-2 rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+          aria-label={`Undo drawing operation (${modKey}+Z)`}
+          title={`Undo (${modKey}+Z)`}
+          className={`min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${
             canUndo ? 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' : 'text-slate-300 cursor-not-allowed'
           }`}
         >
@@ -210,9 +215,9 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
           type="button"
           onClick={onRedo}
           disabled={!canRedo}
-          aria-label="Redo drawing operation (Ctrl+Shift+Z)"
-          title="Redo (Ctrl+Shift+Z)"
-          className={`p-1.5 sm:p-2 rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+          aria-label={`Redo drawing operation (${modKey}+Shift+Z)`}
+          title={`Redo (${modKey}+Shift+Z)`}
+          className={`min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 ${
             canRedo ? 'text-slate-700 hover:bg-slate-100 hover:text-slate-900' : 'text-slate-300 cursor-not-allowed'
           }`}
         >
@@ -225,9 +230,9 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
         <button
           type="button"
           onClick={onClearClick}
-          aria-label="Clear Canvas"
-          title="Clear Canvas"
-          className="p-1.5 sm:p-2 text-slate-700 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-rose-500"
+          aria-label="Clear Canvas for Everyone"
+          title="Clear Canvas for Everyone"
+          className="min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-700 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-1"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -240,7 +245,7 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
           onClick={onExportClick}
           aria-label="Export Canvas as PNG"
           title="Export PNG"
-          className="p-1.5 sm:p-2 text-slate-700 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-700 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -252,4 +257,5 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
 });
 
 Toolbar.displayName = 'Toolbar';
+
 
