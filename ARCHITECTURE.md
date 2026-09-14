@@ -546,7 +546,7 @@ Browser Client A (Desktop)             Browser Client B (Mobile)
 ## 11. Directory Structure
 
 ```text
-mindforge/ (SyncDraw Workspace Root)
+syncdraw/ (SyncDraw Monorepo Workspace Root)
 ├── client/
 │   ├── public/
 │   │   └── _redirects          # SPA client-side route fallback rule
