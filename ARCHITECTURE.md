@@ -517,6 +517,7 @@ mindforge/ (SyncDraw Workspace Root)
 │   │   │   ├── debug/
 │   │   │   │   └── PerfOverlay.tsx     # Dev-mode FPS & latency diagnostics HUD
 │   │   │   ├── ui/
+│   │   │   │   ├── ErrorBoundary.tsx   # Top-level React error boundary
 │   │   │   │   └── Modal.tsx           # Accessible modal dialog
 │   │   │   ├── CreateRoomDialog.tsx    # Room creation modal
 │   │   │   ├── FeatureSection.tsx      # Capabilities grid
